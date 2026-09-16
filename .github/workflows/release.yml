@@ -1,0 +1,413 @@
+# Build the Debian packages and publish them to the Launchpad PPA.
+#
+# Runs on a version tag and nothing else. `make release` writes the version
+# into VERSION, commits, tags and pushes — and the tag push is what lands here.
+# Pushing to main does not build a package; there is no such thing as an
+# untagged release.
+#
+# The jobs are deliberately separate so that the upload cannot happen until the
+# package has been proved installable:
+#
+#   gate     wait for CI and Security to have passed on this exact commit
+#   build    produce the .deb and a signed source package per Ubuntu series
+#   verify   install the .deb in a clean container and check that it works
+#   publish  dput the source packages to Launchpad
+#
+# `publish` needs `verify`, so a package that builds but does not install never
+# reaches the PPA. That ordering is the whole point: a bad upload to a PPA
+# cannot be withdrawn, only superseded by a higher version.
+#
+# ---------------------------------------------------------------------------
+# What this needs configured in the repository
+# ---------------------------------------------------------------------------
+# Secrets (Settings > Secrets and variables > Actions > Secrets):
+#   LAUNCHPAD_GPG_PRIVATE_KEY  the ASCII-armored private key whose public half
+#                              is registered on your Launchpad account
+#   LAUNCHPAD_GPG_PASSPHRASE   that key's passphrase
+#
+# Variables (the same page, Variables tab) — all optional, defaults shown:
+#   LAUNCHPAD_PPA       ppa:bceverly/tmd
+#   LAUNCHPAD_SERIES    the Ubuntu series to build for, space separated
+#                       (default: the three supported LTS releases)
+#
+# The changelog identity comes from debian/control and the signing key from
+# debian/signing-fingerprint, so neither is configured here.
+#
+# See README.md, "Releasing", for how to produce the key.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  # For re-running a failed publish without cutting a new version.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v1.0.0.1)"
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # To read the CI and Security runs for this commit — see the gate job.
+  actions: read
+
+jobs:
+  # ==========================================================================
+  # The gate.
+  #
+  # A tag push runs neither CI nor the security scans — both are wired to main
+  # and pull requests — so without this the release would build from whatever
+  # the tag pointed at, tested or not.
+  #
+  # It *waits* for the runs that already happened rather than starting its own.
+  # `make release` commits the version bump to main and then tags that same
+  # commit, so CI and Security are already running against this exact SHA by
+  # the time the tag lands. Re-running them would duplicate the whole matrix
+  # for an answer that is already being computed.
+  gate:
+    name: Wait for CI and Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for the checks on this commit to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          # Long enough for the slowest leg (CodeQL plus the fuzz run), short
+          # enough that a stuck run does not hold a runner all day.
+          TIMEOUT_MINUTES: "60"
+        run: |
+          set -euo pipefail
+          WANTED="CI Security"
+          DEADLINE=$(( $(date +%s) + TIMEOUT_MINUTES * 60 ))
+
+          echo "Waiting for [$WANTED] on $SHA"
+          while :; do
+            PENDING=""
+            FAILED=""
+            MISSING=""
+            for NAME in $WANTED; do
+              READ=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+                     --jq ".workflow_runs[] | select(.name==\"$NAME\") |
+                           [.status, (.conclusion // \"pending\")] | @tsv" \
+                     | head -1 || true)
+              if [ -z "$READ" ]; then MISSING="$MISSING $NAME"; continue; fi
+              STATUS=$(printf '%s' "$READ" | cut -f1)
+              CONCLUSION=$(printf '%s' "$READ" | cut -f2)
+              if [ "$STATUS" != completed ]; then
+                PENDING="$PENDING $NAME($STATUS)"
+              elif [ "$CONCLUSION" != success ] && [ "$CONCLUSION" != skipped ]; then
+                FAILED="$FAILED $NAME($CONCLUSION)"
+              fi
+            done
+
+            if [ -n "$FAILED" ]; then
+              echo "::error::Refusing to release --$FAILED did not pass on $SHA"
+              exit 1
+            fi
+            # A tag on a commit that never reached main has no runs at all, and
+            # waiting an hour to say so helps nobody.
+            if [ -n "$MISSING" ] && [ $(date +%s) -gt $(( DEADLINE - (TIMEOUT_MINUTES - 5) * 60 )) ]; then
+              echo "::error::No run found for$MISSING on $SHA after 5 minutes."
+              echo "::error::Was this commit pushed to a branch before it was tagged?"
+              exit 1
+            fi
+            if [ -z "$PENDING" ] && [ -z "$MISSING" ]; then
+              echo "All required checks passed on $SHA."
+              break
+            fi
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::Timed out after ${TIMEOUT_MINUTES}m waiting for$PENDING$MISSING"
+              exit 1
+            fi
+            echo "  still waiting:$PENDING$MISSING"
+            sleep 30
+          done
+
+  # ==========================================================================
+  build:
+    name: Build packages
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install the packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential debhelper devscripts dput lintian fakeroot
+
+      # The tag and the version in the tree must agree. release.sh writes the
+      # version, commits and then tags, so they always should — but a tag
+      # pushed by hand is exactly the case where they do not, and a package
+      # whose version does not match its tag is unfixable once uploaded.
+      - name: Check the tag matches VERSION
+        run: |
+          set -eu
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="$(cat VERSION)"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag $TAG does not match VERSION ($VERSION)"
+            exit 1
+          fi
+          echo "Building $TAG (version $VERSION)"
+
+      - name: Import the signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.LAUNCHPAD_GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.LAUNCHPAD_GPG_PASSPHRASE }}
+        run: |
+          set -eu
+          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
+            echo "::error::LAUNCHPAD_GPG_PRIVATE_KEY is not set. See the header"
+            echo "::error::of this workflow for what to configure."
+            exit 1
+          fi
+          mkdir -p ~/.gnupg && chmod 700 ~/.gnupg
+          # Loopback pinentry, because there is no tty to prompt on. The cache
+          # TTL is so the passphrase entered once below is still there when
+          # debsign asks for it.
+          {
+            echo "allow-loopback-pinentry"
+            echo "default-cache-ttl 3600"
+            echo "max-cache-ttl 3600"
+          } > ~/.gnupg/gpg-agent.conf
+          echo "pinentry-mode loopback" > ~/.gnupg/gpg.conf
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --quiet --import
+          gpgconf --kill gpg-agent || true
+          KEYID="$(gpg --list-secret-keys --with-colons \
+                   | awk -F: '/^fpr:/ {print $10; exit}')"
+          # TMD_SIGNING_KEY, not DEBSIGN_KEYID: scripts/build-deb.sh
+          # deliberately ignores the latter, because it is a global shell
+          # variable that on a multi-package machine names the wrong project's
+          # key. See debian/signing-fingerprint.
+          echo "TMD_SIGNING_KEY=$KEYID" >> "$GITHUB_ENV"
+
+          # The secret and the repository must agree about which key this is.
+          # A mismatch here means either the secret was rotated without
+          # updating debian/signing-fingerprint, or the wrong key was pasted in -- and
+          # both produce an upload Launchpad rejects long after the tag exists.
+          PINNED="$(grep -vE '^[[:space:]]*(#|$)' debian/signing-fingerprint \
+                    | head -1 | tr -d '[:space:]')"
+          if [ -n "$PINNED" ] && [ "$PINNED" != "$KEYID" ]; then
+            echo "::error::LAUNCHPAD_GPG_PRIVATE_KEY is $KEYID but"
+            echo "::error::debian/signing-fingerprint pins $PINNED"
+            exit 1
+          fi
+          # Trust it ultimately, or debsign refuses to use it unattended.
+          echo "$KEYID:6:" | gpg --batch --import-ownertrust
+          # Sign something once so the agent caches the passphrase; debsign
+          # then runs without a prompt.
+          echo test | gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "$GPG_PASSPHRASE" --local-user "$KEYID" \
+            --armor --detach-sign --output /dev/null
+          echo "Imported $KEYID"
+
+      # The binary package for this runner's architecture, which the verify job
+      # installs. Not uploaded to the PPA — Launchpad builds its own binaries
+      # from the source package, for every architecture it supports.
+      # The changelog identity comes from debian/control, so there is nothing
+      # to pass in -- see scripts/build-deb.sh.
+      - name: Build the binary package
+        run: scripts/build-deb.sh
+
+      - name: lintian
+        run: lintian --fail-on error,warning ../tmd_*.deb
+
+      # One signed source package per series. Launchpad builds per-series and
+      # rejects an upload whose changelog names a series it does not know, so
+      # this is a loop rather than one package: a C program with no
+      # dependencies builds identically on all of them.
+      - name: Build a signed source package for each series
+        env:
+          # jammy 22.04 LTS, noble 24.04 LTS, resolute 26.04 LTS.
+          #
+          # LTS releases only, and all three of the supported ones. A source
+          # package is built per series because Launchpad builds per series and
+          # rejects an upload whose changelog names one it does not know — and
+          # because the oldest of them is where a portability problem actually
+          # shows up. 22.04 ships GCC 11, which does not support
+          # _FORTIFY_SOURCE=3; the Makefile probes for that rather than
+          # assuming it, so the same source builds on all three.
+          SERIES_LIST: ${{ vars.LAUNCHPAD_SERIES || 'jammy noble resolute' }}
+        run: |
+          set -eux
+          for series in $SERIES_LIST; do
+            # `make clean` between series: the build output is architecture and
+            # flag dependent, and a stale object file is the kind of thing that
+            # only shows up after the upload.
+            make clean
+            SERIES="$series" scripts/build-deb.sh --source
+          done
+
+      - name: Collect the artifacts
+        run: |
+          set -eux
+          mkdir -p artifacts
+          cp ../tmd_*.deb ../tmd_*.dsc ../tmd_*.tar.* \
+             ../tmd_*.changes ../tmd_*.buildinfo artifacts/ 2>/dev/null || true
+          # The PUBLIC half of the signing key travels with the packages.
+          #
+          # publish runs on a different runner with an empty keyring, and dput
+          # verifies the .changes signature before uploading — so without this
+          # it fails with "No public key" for a signature that is perfectly
+          # valid. Carrying it in the artifact rather than fetching it from a
+          # keyserver keeps the upload from depending on a service that has
+          # been known to 404 for a key that was demonstrably there.
+          #
+          # Public key material, so there is nothing here to protect.
+          gpg --armor --export "$TMD_SIGNING_KEY" > artifacts/signing-key.pub.asc
+          ls -lh artifacts/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: artifacts/
+          retention-days: 30
+
+  # ==========================================================================
+  verify:
+    name: Verify it installs
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: artifacts
+
+      # A clean container, not this runner: the runner has a compiler, the
+      # archive tools and everything else the build needed, and "it works here"
+      # on a machine that built it proves very little.
+      #
+      # One image rather than a matrix over every series, because there is only
+      # one binary package to verify: it was built on the runner (24.04) and
+      # links that libc, so it would not install on 22.04 anyway. The other
+      # series are covered by the source packages, which Launchpad compiles on
+      # its own builders for each of them.
+      - name: Install it in a clean container and use it
+        run: |
+          set -eux
+          cat > /tmp/verify.sh <<'SCRIPT'
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          # tar for building a test archive, man-db so the manpage can be
+          # looked up. Deliberately NOT a compiler: the package must not need
+          # one to run.
+          apt-get install -y -qq --no-install-recommends tar man-db
+          dpkg -i /packages/tmd_*_amd64.deb
+
+          # It is installed where the package says it is.
+          test -x /usr/bin/tmd
+          test -f /usr/share/man/man1/tmd.1.gz
+
+          # It runs, and says what it is.
+          tmd --version
+          tmd --help > /dev/null
+          man -w tmd
+
+          # It reads a real archive, in every mode, with the documented exit
+          # statuses.
+          mkdir -p /tmp/tree/sub
+          echo hello > /tmp/tree/hello.txt
+          ln -s hello.txt /tmp/tree/link
+          tar -cf /tmp/check.tar -C /tmp tree
+          tmd -f /tmp/check.tar
+          tmd -f /tmp/check.tar -l   > /dev/null
+          tmd -f /tmp/check.tar -i
+          tmd -f /tmp/check.tar -S   > /dev/null
+          tmd -f /tmp/check.tar -c
+          tmd -f /tmp/check.tar --format=json > /tmp/out.json
+          head -c 1 /tmp/out.json | grep -q '{'
+          tmd -f /tmp/check.tar --format=csv | head -1 | grep -q '^path,'
+          tmd -f /tmp/check.tar -o /tmp/report.txt
+          test -s /tmp/report.txt
+
+          # The listing agrees with tar's own, which is the check that matters.
+          tar -tvf /tmp/check.tar | awk '{print $1, $NF}' > /tmp/tar.txt
+          tmd -f /tmp/check.tar   | awk '{print $1, $NF}' > /tmp/tmd.txt
+          diff /tmp/tar.txt /tmp/tmd.txt
+
+          # A bare invocation shows the usage and succeeds.
+          tmd > /dev/null
+          # A missing archive fails with the documented status.
+          tmd -f /nonexistent.tar && exit 1 || test $? -eq 1
+
+          # And it uninstalls cleanly.
+          dpkg -r tmd
+          test ! -e /usr/bin/tmd
+          echo "VERIFIED"
+          SCRIPT
+          docker run --rm -v "$PWD/artifacts:/packages:ro" \
+            -v /tmp/verify.sh:/verify.sh:ro \
+            ubuntu:24.04 bash /verify.sh
+
+  # ==========================================================================
+  publish:
+    name: Publish to Launchpad
+    needs: verify
+    runs-on: ubuntu-latest
+    # A PPA upload cannot be taken back, only superseded. An environment gives
+    # the option of requiring a manual approval before that happens; leave it
+    # unprotected and it is automatic.
+    environment: launchpad
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: artifacts
+
+      - name: Install dput
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends dput
+
+      - name: Trust the signing key well enough to verify the upload
+        run: |
+          set -eu
+          # Only the public key: nothing is signed in this job, and the private
+          # half has no business on this runner.
+          gpg --batch --quiet --import artifacts/signing-key.pub.asc
+          KEYID="$(gpg --list-keys --with-colons \
+                   | awk -F: '/^fpr:/ {print $10; exit}')"
+          # Ownertrust as well as presence: a key that is merely present gives
+          # gpgme a valid signature of unknown validity, which dput's check is
+          # not guaranteed to be satisfied by.
+          echo "$KEYID:6:" | gpg --batch --import-ownertrust
+          echo "Imported $KEYID for verification"
+
+      - name: Upload the source packages
+        env:
+          PPA: ${{ vars.LAUNCHPAD_PPA || 'ppa:bceverly/tmd' }}
+        run: |
+          set -eu
+          uploaded=0
+          for changes in artifacts/tmd_*_source.changes; do
+            [ -f "$changes" ] || continue
+            echo "Uploading $(basename "$changes") to $PPA"
+            # The .changes file is already signed; dput authenticates by that
+            # signature alone. There is no password or token in this step.
+            #
+            # Deliberately NOT --unchecked: that skips dput's verification of
+            # the signature, which is the one thing standing between a corrupt
+            # upload and a rejection twenty minutes later with no explanation.
+            dput "$PPA" "$changes"
+            uploaded=$((uploaded + 1))
+          done
+          if [ "$uploaded" -eq 0 ]; then
+            echo "::error::No source packages were found to upload."
+            exit 1
+          fi
+          echo "Uploaded $uploaded source package(s). Launchpad builds"
+          echo "asynchronously, so watch it at:"
+          echo "  https://launchpad.net/~${PPA#ppa:}/+packages"

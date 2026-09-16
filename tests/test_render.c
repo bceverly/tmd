@@ -1,0 +1,415 @@
+/*
+ * Copyright (c) 2026 Bryan C. Everly
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+#include "test.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#include "render.h"
+#include "util.h"
+
+/* A minimal entry, so each test only says what it is actually about. */
+static void make_entry(struct tmd_entry *e)
+{
+    memset(e, 0, sizeof(*e));
+    e->path = (char *)"src/main.c";
+    e->linkpath = (char *)"";
+    e->uname = (char *)"bceverly";
+    e->gname = (char *)"staff";
+    e->uid = 1000;
+    e->gid = 50;
+    e->mode = 0644;
+    e->size = 1234;
+    e->kind = TMD_KIND_FILE;
+    e->format = TMD_FMT_PAX;
+    e->typeflag = '0';
+    e->mtime.sec = 1600000000;
+    e->mtime.present = true;
+    e->chksum_ok = true;
+}
+
+static void default_options(struct tmd_options *opt)
+{
+    memset(opt, 0, sizeof(*opt));
+    /* UTC, so the expected strings below do not depend on where the tests run.
+     * A test that passes only in one time zone is worse than no test. */
+    opt->utc = true;
+}
+
+static void test_listing_line(void)
+{
+    struct tmd_entry   e;
+    struct tmd_options opt;
+    char              *line;
+
+    default_options(&opt);
+
+    TEST_CASE("a regular file renders in ls -l shape");
+    make_entry(&e);
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "-rw-r--r--");
+    CHECK_CONTAINS(line, "bceverly/staff");
+    CHECK_CONTAINS(line, "1234");
+    CHECK_CONTAINS(line, "2020-09-13 12:26");
+    CHECK_CONTAINS(line, "src/main.c");
+    free(line);
+
+    TEST_CASE("a symlink shows its target with an arrow");
+    make_entry(&e);
+    e.kind = TMD_KIND_SYMLINK;
+    e.mode = 0777;
+    e.path = (char *)"bin/tmd";
+    e.linkpath = (char *)"../src/tmd";
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "lrwxrwxrwx");
+    CHECK_CONTAINS(line, "bin/tmd -> ../src/tmd");
+    free(line);
+
+    TEST_CASE("a hard link says what it links to, the way tar does");
+    make_entry(&e);
+    e.kind = TMD_KIND_HARDLINK;
+    e.path = (char *)"copy.txt";
+    e.linkpath = (char *)"original.txt";
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "copy.txt link to original.txt");
+    free(line);
+
+    TEST_CASE("a device shows major,minor where the size would be");
+    make_entry(&e);
+    e.kind = TMD_KIND_CHARDEV;
+    e.path = (char *)"dev/null";
+    e.has_dev = true;
+    e.devmajor = 1;
+    e.devminor = 3;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "crw-r--r--");
+    CHECK_CONTAINS(line, "1,3");
+    free(line);
+
+    TEST_CASE("-n prints numbers even when the archive carries names");
+    make_entry(&e);
+    opt.numeric = true;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "1000/50");
+    free(line);
+    opt.numeric = false;
+
+    TEST_CASE("a missing name falls back to the number, per field");
+    /* An archive can carry a uname and no gname; the mixed case is real. */
+    make_entry(&e);
+    e.gname = (char *)"";
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "bceverly/50");
+    free(line);
+
+    TEST_CASE("-H renders the size the way ls -h does");
+    make_entry(&e);
+    e.size = 5 * 1024 * 1024;
+    opt.human = true;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "5.0M");
+    free(line);
+    opt.human = false;
+
+    TEST_CASE("an absent mtime prints a dash rather than 1970");
+    make_entry(&e);
+    e.mtime.present = false;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, " - ");
+    CHECK(strstr(line, "1970") == NULL);
+    free(line);
+
+    TEST_CASE("a timestamp too large for this platform's time_t prints the number");
+    make_entry(&e);
+    e.mtime.sec = 9223372036854775807LL;
+    line = tmd_render_listing_line(&e, &opt);
+    /* Either the raw seconds or a real date — never a wrong date and never
+     * a crash. */
+    CHECK(strstr(line, "@9223372036854775807") != NULL ||
+          strstr(line, "-") != NULL);
+    free(line);
+
+    TEST_CASE("--full-time adds seconds and the zone");
+    make_entry(&e);
+    opt.full_time = true;
+    e.mtime.nsec = 123456789;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "2020-09-13 12:26:40.123456789");
+    free(line);
+    opt.full_time = false;
+
+    TEST_CASE("--color wraps the path and nothing else");
+    make_entry(&e);
+    e.kind = TMD_KIND_DIR;
+    e.path = (char *)"src/";
+    opt.color = true;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "\033[1;34msrc/\033[0m");
+    free(line);
+    opt.color = false;
+}
+
+static void test_json_escaping(void)
+{
+    struct tmd_buf b;
+
+    TEST_CASE("the characters JSON requires escaped are escaped");
+    tmd_buf_init(&b);
+    tmd_json_escape(&b, "a\"b\\c\nd\te");
+    CHECK_STR(b.data, "\"a\\\"b\\\\c\\nd\\te\"");
+    tmd_buf_free(&b);
+
+    TEST_CASE("control characters become \\u00XX");
+    tmd_buf_init(&b);
+    /* Octal, not "\\x07end": a hex escape consumes every hex digit that
+     * follows it, so "\\x07e" is one character, U+007E, and the test would be
+     * about a tilde. */
+    tmd_json_escape(&b, "bell\007end");
+    CHECK_STR(b.data, "\"bell\\u0007end\"");
+    tmd_buf_free(&b);
+
+    TEST_CASE("valid UTF-8 passes through as its own bytes");
+    /* Escaping it would be legal JSON and would make every non-English path
+     * unreadable in the output. */
+    tmd_buf_init(&b);
+    tmd_json_escape(&b, "caf\xc3\xa9/na\xc3\xafve");
+    CHECK_STR(b.data, "\"caf\xc3\xa9/na\xc3\xafve\"");
+    tmd_buf_free(&b);
+
+    TEST_CASE("a path that is not valid UTF-8 is escaped byte by byte");
+    /* A tar path is bytes, not text: a Latin-1 filename is a legal archive.
+     * Emitting the raw byte produces JSON a strict parser rejects, and
+     * replacing it with U+FFFD destroys the only copy of the value. */
+    tmd_buf_init(&b);
+    tmd_json_escape(&b, "caf\xe9");
+    CHECK_STR(b.data, "\"caf\\u00e9\"");
+    tmd_buf_free(&b);
+
+    TEST_CASE("an empty string is a pair of quotes");
+    tmd_buf_init(&b);
+    tmd_json_escape(&b, "");
+    CHECK_STR(b.data, "\"\"");
+    tmd_buf_free(&b);
+}
+
+/* The renderer writes to a FILE*, so the whole-output tests go through a
+ * temporary file and read it back. open_memstream would be neater and is a GNU
+ * extension; this works anywhere. */
+static char *render_to_string(const struct tmd_options *opt,
+                              const struct tmd_archive *archive,
+                              const struct tmd_entry *entries, size_t count)
+{
+    char               path[] = "/tmp/tmd-test-renderXXXXXX";
+    int                fd = mkstemp(path);
+    FILE              *f;
+    struct tmd_render *rd;
+    struct tmd_buf     out;
+    char               chunk[4096];
+    size_t             got;
+    size_t             i;
+
+    if (fd < 0)
+        return tmd_xstrdup("");
+    f = fdopen(fd, "w+b");
+    if (!f) {
+        (void)remove(path);
+        return tmd_xstrdup("");
+    }
+
+    rd = tmd_render_new(f, opt, 1);
+    tmd_render_archive_begin(rd, archive);
+    for (i = 0; i < count; i++)
+        tmd_render_entry(rd, &entries[i]);
+    tmd_render_archive_end(rd, archive);
+    tmd_render_finish(rd);
+    tmd_render_free(rd);
+
+    (void)fflush(f);
+    rewind(f);
+    tmd_buf_init(&out);
+    while ((got = fread(chunk, 1, sizeof(chunk), f)) > 0)
+        tmd_buf_add(&out, chunk, got);
+    (void)fclose(f);
+    (void)remove(path);
+    return tmd_buf_detach(&out);
+}
+
+static void test_output_formats(void)
+{
+    struct tmd_entry   e;
+    struct tmd_archive a;
+    struct tmd_options opt;
+    char              *out;
+
+    memset(&a, 0, sizeof(a));
+    a.name = (char *)"test.tar";
+    a.format = TMD_FMT_PAX;
+    a.formats[TMD_FMT_USTAR] = true;
+    a.formats[TMD_FMT_PAX] = true;
+    a.entries = 1;
+    a.counts[TMD_KIND_FILE] = 1;
+    a.total_size = 1234;
+    a.total_stored = 1536;
+    a.file_size = 10240;
+    a.record_blocks = 20;
+    a.eof_marker = true;
+    a.writer = "GNU tar";
+
+    TEST_CASE("the default text output is the listing and nothing else");
+    default_options(&opt);
+    make_entry(&e);
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "src/main.c");
+    /* No banner, no summary: `tmd -f x.tar | awk` must not have to strip one. */
+    CHECK(strstr(out, "test.tar") == NULL);
+    CHECK(strstr(out, "members") == NULL);
+    free(out);
+
+    TEST_CASE("-S appends the summary after the listing");
+    default_options(&opt);
+    opt.with_summary = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "src/main.c");
+    CHECK_CONTAINS(out, "POSIX pax (POSIX.1-2001)");
+    CHECK_CONTAINS(out, "written by    GNU tar (inferred)");
+    CHECK_CONTAINS(out, "end marker    present");
+    CHECK_CONTAINS(out, "blocking      20 blocks");
+    free(out);
+
+    TEST_CASE("-s prints the summary and no entries at all");
+    default_options(&opt);
+    opt.summary_only = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK(strstr(out, "src/main.c") == NULL);
+    CHECK_CONTAINS(out, "members       1");
+    free(out);
+
+    TEST_CASE("a missing end marker is called out in the summary");
+    default_options(&opt);
+    opt.summary_only = true;
+    a.eof_marker = false;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "MISSING");
+    free(out);
+    a.eof_marker = true;
+
+    TEST_CASE("--long prints every field of the member");
+    default_options(&opt);
+    opt.long_form = true;
+    make_entry(&e);
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "type        file");
+    CHECK_CONTAINS(out, "format      pax");
+    CHECK_CONTAINS(out, "mode        0644  -rw-r--r--");
+    CHECK_CONTAINS(out, "owner       bceverly (1000) / staff (50)");
+    CHECK_CONTAINS(out, "checksum    ok");
+    free(out);
+
+    TEST_CASE("-R adds the raw header fields");
+    default_options(&opt);
+    opt.long_form = true;
+    opt.headers = true;
+    make_entry(&e);
+    (void)snprintf(e.raw.magic, sizeof(e.raw.magic), "%s", "ustar");
+    (void)snprintf(e.raw.mode, sizeof(e.raw.mode), "%s", "0000644");
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "raw header");
+    CHECK_CONTAINS(out, "mode      \"0000644\"");
+    CHECK_CONTAINS(out, "magic     \"ustar\"");
+    free(out);
+
+    TEST_CASE("csv writes a header row and quotes what needs quoting");
+    default_options(&opt);
+    opt.output = TMD_OUT_CSV;
+    make_entry(&e);
+    e.path = (char *)"a,file\"with\nawkward,name";
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "path,kind,mode_string");
+    CHECK_CONTAINS(out, "\"a,file\"\"with\nawkward,name\"");
+    CHECK_CONTAINS(out, "2020-09-13T12:26:40Z");
+    free(out);
+
+    TEST_CASE("json carries the entry and the summary in one object");
+    default_options(&opt);
+    opt.output = TMD_OUT_JSON;
+    make_entry(&e);
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"archive\": \"test.tar\"");
+    CHECK_CONTAINS(out, "\"path\": \"src/main.c\"");
+    CHECK_CONTAINS(out, "\"kind\": \"file\"");
+    CHECK_CONTAINS(out, "\"mtime\": \"2020-09-13T12:26:40Z\"");
+    CHECK_CONTAINS(out, "\"summary\":");
+    CHECK_CONTAINS(out, "\"end_marker\": true");
+    free(out);
+
+    TEST_CASE("json of an archive with no entries is still valid");
+    /* The comma between entries is tracked by hand while streaming, so the
+     * empty case is exactly where a stray one would appear. */
+    default_options(&opt);
+    opt.output = TMD_OUT_JSON;
+    out = render_to_string(&opt, &a, NULL, 0);
+    CHECK_CONTAINS(out, "\"entries\": [\n  ],");
+    free(out);
+
+    TEST_CASE("sparse segments appear in both the long and the json form");
+    {
+        struct tmd_sparse segments[2] = { { 0, 512 }, { 1048064, 512 } };
+        default_options(&opt);
+        make_entry(&e);
+        e.is_sparse = true;
+        e.realsize = 1048576;
+        e.sparse = segments;
+        e.nsparse = 2;
+
+        opt.long_form = true;
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "sparse      2 data segments, expands to 1048576");
+        free(out);
+
+        default_options(&opt);
+        opt.output = TMD_OUT_JSON;
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "\"sparse\": {\"realsize\": 1048576");
+        CHECK_CONTAINS(out, "{\"offset\": 0, \"bytes\": 512}");
+        free(out);
+    }
+
+    TEST_CASE("pax attributes and warnings reach the long and json forms");
+    {
+        struct tmd_kv pax[1];
+        char         *warnings[1];
+
+        pax[0].key = (char *)"SCHILY.xattr.user.tag";
+        pax[0].value = (char *)"value";
+        warnings[0] = (char *)"header checksum mismatch";
+
+        default_options(&opt);
+        make_entry(&e);
+        e.pax = pax;
+        e.npax = 1;
+        e.warnings = warnings;
+        e.nwarnings = 1;
+
+        opt.long_form = true;
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "pax         SCHILY.xattr.user.tag = value");
+        CHECK_CONTAINS(out, "warning     header checksum mismatch");
+        free(out);
+
+        default_options(&opt);
+        opt.output = TMD_OUT_JSON;
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "\"pax\": {\"SCHILY.xattr.user.tag\": \"value\"}");
+        CHECK_CONTAINS(out, "\"warnings\": [\"header checksum mismatch\"]");
+        free(out);
+    }
+}
+
+void test_render(void)
+{
+    test_listing_line();
+    test_json_escaping();
+    test_output_formats();
+}

@@ -1,0 +1,45 @@
+Source: tmd
+Section: utils
+Priority: optional
+Maintainer: Bryan C. Everly <bryan@theeverlys.com>
+# Deliberately short, and it is meant to stay that way. tmd is C with no
+# dependencies beyond libc: there is nothing to vendor, nothing to fetch, and a
+# Launchpad builder -- which has no network -- can build it from the source
+# package alone. Every entry added here is a reason a build could fail on
+# somebody else's machine.
+Build-Depends:
+ debhelper-compat (= 13),
+Standards-Version: 4.7.0
+Homepage: https://github.com/bceverly/tmd
+Vcs-Git: https://github.com/bceverly/tmd.git
+Vcs-Browser: https://github.com/bceverly/tmd
+Rules-Requires-Root: no
+
+Package: tmd
+# Not "all": this is a compiled C program, so the package is tied to an
+# architecture. "any" rather than a list, because nothing here is
+# architecture-specific -- the build works wherever a C11 compiler does.
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+Description: dump the metadata out of a tar archive
+ tmd reads a tar archive and reports what is inside it without extracting
+ anything. By default it prints one ls(1)-style line per member: the permission
+ bits, the owner and group, the size, the modification time the archive
+ recorded, and the path.
+ .
+ BSD archives (ustar and pax, as bsdtar and libarchive write them), GNU tar
+ archives including long names and sparse files, and pre-POSIX v7 archives are
+ all understood. The format is worked out per member rather than per archive,
+ because a real archive mixes them.
+ .
+ Beyond the listing it can report every header field in long, JSON or CSV form;
+ verify header checksums and the end-of-archive marker; and describe the
+ archive itself -- which generation of the format it belongs to, which
+ extensions it relies on, what wrote it, and what it would take to read it
+ somewhere else.
+ .
+ The archive is only ever opened for reading. Only headers are read, and member
+ data is seeked over, so the cost of reading an archive is proportional to how
+ many members it has rather than to how large it is.

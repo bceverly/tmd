@@ -1,0 +1,232 @@
+# Build, lint and test on every push and pull request.
+#
+# Each concern is its own job so a failure names itself in the checks list, and
+# so they run in parallel. Everything here is exactly what `make` does locally —
+# same targets, same scripts, same thresholds — so a clean local run means a
+# clean CI run. The tools each script would otherwise skip are installed first,
+# because a scanner that is not installed reports "skipped" and passes, and a
+# job that passes by doing nothing is worse than no job.
+
+name: CI
+
+on:
+  # Every branch, not just main: work that has been pushed but not yet opened
+  # as a pull request is exactly the work most likely to be broken, and it used
+  # to run nothing at all. 'branches' rather than a bare 'push:' so that a tag
+  # push does not duplicate this — the release workflow waits on the runs from
+  # the commit the tag names, which already exist by then.
+  push:
+    branches: ['**']
+  # Kept for pull requests that arrive from a FORK, where the push above
+  # happens in somebody else's repository and never reaches this one. Jobs are
+  # guarded so a PR from a branch of this repo does not run everything twice.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch makes the previous run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only: nothing here needs write access to the repository.
+permissions:
+  contents: read
+
+jobs:
+  # ==========================================================================
+  lint:
+    name: Lint
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # scripts/lint.sh skips any tool it cannot find, so they all go in.
+      - name: Install the analyzers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential cppcheck clang-tidy shellcheck devscripts
+
+      # The manpage and the version check both need the binary, and `make lint`
+      # says so rather than guessing — but building here makes the failure, if
+      # there is one, say "build" rather than "lint".
+      - name: make build
+        run: make build
+
+      - name: make lint
+        run: make lint
+
+      # The manpage is generated from the program's own --help. A pull request
+      # that adds an option and forgets to run `make man` fails here rather
+      # than shipping a manpage that documents the previous release.
+      - name: The manpage is current
+        run: make man-check
+
+  # ==========================================================================
+  test:
+    name: Tests (${{ matrix.cc }})
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      # One compiler failing must not cancel the other: knowing it breaks under
+      # clang *and* passes under gcc is the whole point of running both.
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the compiler and the archive tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential ${{ matrix.cc }} libarchive-tools
+          # libarchive-tools is bsdtar. Without it the end-to-end suite skips
+          # every BSD-writer test, which are half the reason it exists.
+
+      - name: make build
+        run: make build
+
+      # -Werror is off by default so that a newer compiler inventing a new
+      # warning cannot stop somebody building from source. Here is where a new
+      # warning should fail, so here it is switched on.
+      - name: Build again with -Werror
+        run: make clean && make build WERROR=-Werror
+
+      - name: make test-unit
+        run: make test-unit
+
+      - name: make test-cli
+        run: make test-cli
+
+  # ==========================================================================
+  # Separate from `test` because it is slow and because its failures are of a
+  # different kind: not "the answer is wrong" but "the program did something it
+  # is not allowed to do".
+  memory:
+    name: Sanitizers and valgrind
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install valgrind and the archive tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential valgrind libarchive-tools
+
+      - name: make test-memory
+        run: make test-memory
+
+      - name: Upload the sanitizer logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-logs
+          path: .sanitize/*.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  coverage:
+    name: Coverage (80% gate)
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install gcovr and the archive tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential gcovr libarchive-tools
+
+      # Runs both suites against one instrumented build: the unit tests never
+      # reach main.c or opts.c, and the end-to-end tests are what cover them.
+      - name: make coverage
+        run: make coverage
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            .coverage/coverage.xml
+            .coverage/*.gcov
+            .coverage/index.html
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  # The package has to build and the binary in it has to work. A release is not
+  # the place to find out that debian/rules is broken: by then the tag exists.
+  package:
+    name: Package
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential debhelper devscripts lintian fakeroot
+
+      - name: make deb
+        run: make deb
+
+      # lintian's opinion is informational for a local build and a failure
+      # here: a tag that a distribution would reject should not reach one.
+      - name: lintian
+        run: lintian --fail-on error,warning ../tmd_*.deb
+
+      - name: Install it and check it runs
+        run: |
+          set -eux
+          sudo dpkg -i ../tmd_*_amd64.deb
+          # The installed binary, not the one in ./bin.
+          which tmd
+          tmd --version
+          man -w tmd
+          # A real archive through the installed copy, and the exit status has
+          # to be the documented one.
+          tar -cf /tmp/check.tar debian src
+          tmd -f /tmp/check.tar | head -5
+          tmd -f /tmp/check.tar -i
+          tmd -f /tmp/check.tar -c
+          test "$(tmd -f /tmp/check.tar --format=json | head -c 1)" = "{"
+          sudo dpkg -r tmd
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: ../tmd_*.deb
+          retention-days: 14
+          if-no-files-found: error

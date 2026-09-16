@@ -1,0 +1,15 @@
+# Keep the GitHub Actions this project uses current.
+#
+# Only the actions: there are no application dependencies to update. tmd is C
+# with nothing linked but libc, which is the whole reason there is no ecosystem
+# entry here — the absence is deliberate, not an oversight.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"

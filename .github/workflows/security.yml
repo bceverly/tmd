@@ -1,0 +1,172 @@
+# Security scanning.
+#
+# The `security` job runs exactly what `make security` runs locally — same
+# script, same tools, same thresholds — so a clean local run means a clean CI
+# run. The scanners are installed first, because scripts/security.sh *skips*
+# any tool it cannot find; without installing them the job would pass by doing
+# nothing.
+#
+# Everything that is not part of `make security` gets its own job: CodeQL,
+# because it reports into GitHub's own code-scanning UI rather than to stdout,
+# and the long fuzz run, because nobody wants a twenty-minute fuzz on every
+# push.
+
+name: Security
+
+on:
+  # Every branch, not just main: work that has been pushed but not yet opened
+  # as a pull request is exactly the work most likely to be broken, and it used
+  # to run nothing at all. 'branches' rather than a bare 'push:' so that a tag
+  # push does not duplicate this — the release workflow waits on the runs from
+  # the commit the tag names, which already exist by then.
+  push:
+    branches: ['**']
+  # Kept for pull requests that arrive from a FORK, where the push above
+  # happens in somebody else's repository and never reaches this one. Jobs are
+  # guarded so a PR from a branch of this repo does not run everything twice.
+  pull_request:
+    branches: [main]
+  schedule:
+    # Mondays 06:00 UTC. A parser does not rot, but the scanners' rules change
+    # and a newly-added CERT rule can find something in code nobody has touched.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ==========================================================================
+  # hardening-check · gcc -fanalyzer · cppcheck+CERT · scan-build · flawfinder
+  # · semgrep · the sanitizers · a fuzz run · gitleaks
+  # ==========================================================================
+  security:
+    name: Security scan
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # gitleaks scans history, which the default single-commit checkout
+          # does not provide.
+          fetch-depth: 0
+
+      - name: Install the scanners
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential clang clang-tools cppcheck flawfinder \
+            valgrind libarchive-tools devscripts
+          # Pinned, and the same version scripts/install-dev.sh installs, so a
+          # clean local scan and a clean CI scan mean the same thing.
+          GITLEAKS_VERSION=8.21.2
+          curl -sSfL \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          python3 -m pip install --quiet --break-system-packages semgrep \
+            || echo "::warning::semgrep install failed; that scan will skip"
+
+      # The hardening check reads the built binary, so it has to exist.
+      - name: make build
+        run: make build
+
+      - name: make security
+        env:
+          # Longer than the local default: this is the run that has a whole
+          # runner to itself.
+          SECURITY_FUZZ_SECONDS: "120"
+        run: make security
+
+      - name: Upload the scanner reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-reports
+          path: .security-reports/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  # ==========================================================================
+  # Not part of `make security`: it needs GitHub's own infrastructure and
+  # reports into the repository's code-scanning tab rather than to stdout.
+  codeql:
+    name: CodeQL
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: c-cpp
+          queries: security-extended
+
+      # CodeQL needs to watch a real compile to build its database, so this is
+      # `make build` rather than autobuild guessing at it.
+      - name: Build
+        run: make build
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:c-cpp"
+
+  # ==========================================================================
+  # A long fuzz run, on a schedule rather than on every push.
+  #
+  # tmd parses files other people produce, so this is the check that most
+  # directly matches the threat. libFuzzer is used when clang is available,
+  # which on this runner it is; the corpus is seeded with one archive of every
+  # dialect and the findings are kept as artifacts so a crash can be replayed.
+  fuzz:
+    name: Fuzz (${{ github.event_name == 'schedule' && '15 minutes' || '3 minutes' }})
+    # See the 'on:' block: skip for pull requests raised from a branch of
+    # this repository, whose push event already ran this job.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install clang and the archive tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential clang libarchive-tools
+
+      - name: make fuzz
+        env:
+          FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '900' || '180' }}
+        run: make fuzz
+
+      # Whatever the fuzzer found, and the corpus it found it from. Without
+      # this a crash in CI is a red X with no way to reproduce it.
+      - name: Upload the findings and the corpus
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-findings
+          path: |
+            .fuzz/crash.tar
+            .fuzz/findings/
+            .fuzz/*.log
+          retention-days: 30
+          if-no-files-found: ignore

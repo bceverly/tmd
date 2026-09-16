@@ -1,0 +1,55 @@
+#!/usr/bin/make -f
+# =============================================================================
+# tmd — Debian packaging
+#
+# There is very little here, and that is the point: the package is one binary
+# and one manpage, built from C with no dependencies. The overrides below exist
+# to hand the work to this project's own Makefile rather than to let debhelper
+# guess at it, so that what a package build does and what a developer does are
+# the same commands.
+# =============================================================================
+
+# Every hardening feature the distribution knows about, and the resulting
+# CFLAGS/CPPFLAGS/LDFLAGS exported into the environment. The project Makefile
+# appends its own flags to these rather than replacing them, so both survive —
+# see the "Flags" section there.
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+include /usr/share/dpkg/buildflags.mk
+
+%:
+	dh $@
+
+# Nothing to configure: no autotools, no cmake, no generated headers.
+override_dh_auto_configure:
+
+# VERSION is passed explicitly so the packaged binary carries the released
+# number and never the "-dev" suffix scripts/version.sh adds for a working
+# tree. A source package unpacked on a builder has no .git and would get the
+# plain number anyway; this makes a local `make deb` from a dirty checkout
+# behave the same way, so the binary in the package and the version on the
+# package always agree.
+override_dh_auto_build:
+	$(MAKE) build VERSION=$(shell cat VERSION)
+
+# The unit tests only. They are self-contained, deterministic and take under a
+# second, so running them here costs nothing and catches a compiler or libc
+# difference on an architecture nobody develops on — which is exactly the thing
+# a build on somebody else's machine is for.
+#
+# The end-to-end suite is deliberately NOT run: it shells out to tar, bsdtar,
+# gzip and python3 to build its fixtures, and a package build that depends on
+# what happens to be installed on the builder is a package build that fails for
+# reasons that have nothing to do with the package.
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(MAKE) test-unit
+endif
+
+override_dh_auto_install:
+	$(MAKE) install-tree DESTDIR=$(CURDIR)/debian/tmd prefix=/usr \
+	        VERSION=$(shell cat VERSION)
+
+# Safe to run here, unlike in most projects: `make clean` in this one removes
+# build output and nothing else.
+override_dh_auto_clean:
+	$(MAKE) clean

@@ -1,0 +1,27 @@
+# PUBLIC DATA. This file contains an OpenPGP *fingerprint* — an identifier,
+# not key material. It is the same string published at
+# https://launchpad.net/~bceverly/+editpgpkeys and served by
+# keyserver.ubuntu.com to anyone who asks. Nothing here is secret, and nothing
+# here can sign anything.
+#
+# The private half lives in a password vault and in the
+# LAUNCHPAD_GPG_PRIVATE_KEY GitHub secret, and nowhere else. It is never
+# written into this repository in any form.
+#
+# ---------------------------------------------------------------------------
+#
+# Which key signs tmd's source packages for the Launchpad PPA.
+#
+# Pinned here, in the repository, rather than taken from DEBSIGN_KEYID in the
+# environment. That variable is global to a shell, and a developer who
+# maintains more than one package has one value in their profile for whichever
+# project they set up first: tmd's first clean-chroot build was signed by a key
+# called "Milsurp Monitor Package Signing" for exactly that reason. Which key
+# signs this project is a property of this project.
+#
+# To use a different key for one build without editing this file:
+#     TMD_SIGNING_KEY=<fingerprint> make deb-source
+#
+# Format: one full 40-character fingerprint. Comments and blank lines ignored.
+
+C317E2A7C4820C0592D2570C0539F92B5FF53B4E

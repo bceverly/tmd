@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) 2026 Bryan C. Everly
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+/*
+ * The option table — the one place an option is defined.
+ *
+ * This file is included three times with TMD_OPT defined differently each
+ * time: once to build the getopt_long table, once to build the short option
+ * string, and once to print the help. scripts/gen-man.sh then generates the
+ * manpage from that help text, so there is exactly one place to edit when an
+ * option is added and no way for the four of them to drift apart.
+ *
+ *   TMD_OPT(code, long name, argument, argument name, help)
+ *
+ * `code` is the short letter, or one of the OPT_* constants above 255 for the
+ * options that have no short form.
+ */
+
+TMD_OPT('f', "file",          required_argument, "FILE",
+        "read this archive; \"-\" means standard input (required, repeatable)")
+TMD_OPT('o', "output",        required_argument, "FILE",
+        "write the report to FILE instead of standard output")
+TMD_OPT('l', "long",          no_argument,       NULL,
+        "one block per member with every field, rather than one line")
+TMD_OPT('R', "raw-headers",   no_argument,       NULL,
+        "also show the raw 512-byte header fields (implies --long)")
+TMD_OPT('i', "info",          no_argument,       NULL,
+        "report what the archive IS: format generation, extensions, integrity")
+TMD_OPT('s', "summary",       no_argument,       NULL,
+        "print only the archive summary, no member listing")
+TMD_OPT('S', "with-summary",  no_argument,       NULL,
+        "print the listing and then the summary")
+TMD_OPT('n', "numeric-owner", no_argument,       NULL,
+        "show numeric uid/gid instead of the names stored in the archive")
+TMD_OPT('H', "human",         no_argument,       NULL,
+        "print sizes as 1.4K and 23M rather than in bytes")
+TMD_OPT('u', "utc",           no_argument,       NULL,
+        "render timestamps as UTC rather than in local time")
+TMD_OPT('T', "full-time",     no_argument,       NULL,
+        "include seconds, nanoseconds and the zone offset in timestamps")
+TMD_OPT('c', "check",         no_argument,       NULL,
+        "check the archive for damage (checksums, truncation); exit 3 on any")
+TMD_OPT('q', "quiet",         no_argument,       NULL,
+        "do not write warnings about damaged headers to standard error")
+TMD_OPT(OPT_FORMAT, "format", required_argument, "FMT",
+        "output format: text (the default), json or csv")
+TMD_OPT(OPT_COLOR,  "color",  optional_argument, "WHEN",
+        "colorize the listing: auto (the default), always or never")
+TMD_OPT('h', "help",          no_argument,       NULL,
+        "show this help and exit")
+TMD_OPT('V', "version",       no_argument,       NULL,
+        "show the version and exit")
