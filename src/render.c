@@ -140,19 +140,22 @@ static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
     const struct tm *tm;
     time_t           seconds;
 
-    if (!t->present) {
+    if (!t->present)
+    {
         (void)snprintf(buf, bufsz, "%s", "-");
         return;
     }
 
     seconds = (time_t)t->sec;
-    if ((int64_t)seconds != t->sec) {
+    if ((int64_t)seconds != t->sec)
+    {
         (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
         return;
     }
 
     tm = opt->local ? localtime_r(&seconds, &tmbuf) : gmtime_r(&seconds, &tmbuf);
-    if (!tm) {
+    if (!tm)
+    {
         (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
         return;
     }
@@ -165,7 +168,8 @@ static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
      * contents in time. A trailing Z says UTC; a numeric offset says the
      * reader asked for local and here is what that was worth.
      */
-    if (opt->full_time) {
+    if (opt->full_time)
+    {
         /* Sized for the widest struct tm a platform can hold: tm_year is an
          * int, so the year runs to 10 digits and the stamp to 25 characters.
          * The guard below stays regardless -- the buffer being large enough is
@@ -178,33 +182,43 @@ static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
          * to the truth than showing it as a wider number. */
         unsigned nsec = t->nsec % 1000000000u;
 
-        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm)) {
+        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm))
+        {
             (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
             return;
         }
-        if (opt->local) {
+        if (opt->local)
+        {
             /* No offset is better than a wrong one. */
-            if (!TIME_FITS(zone, sizeof(zone), " %z", tm)) {
+            if (!TIME_FITS(zone, sizeof(zone), " %z", tm))
+            {
                 zone[0] = '\0';
             }
-        } else {
+        } else
+        {
             (void)snprintf(zone, sizeof(zone), "Z");
         }
 
-        if (nsec) {
+        if (nsec)
+        {
             (void)snprintf(buf, bufsz, "%s.%09u%s", stamp, nsec, zone);
-        } else {
+        } else
+        {
             (void)snprintf(buf, bufsz, "%s%s", stamp, zone);
         }
-    } else if (opt->local) {
+    } else if (opt->local)
+    {
         char stamp[32];
 
-        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm)) {
+        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm))
+        {
             (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
-        } else {
+        } else
+        {
             (void)snprintf(buf, bufsz, "%s", stamp);
         }
-    } else if (!TIME_FITS(buf, bufsz, "%Y-%m-%d %H:%M:%SZ", tm)) {
+    } else if (!TIME_FITS(buf, bufsz, "%Y-%m-%d %H:%M:%SZ", tm))
+    {
         (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
     }
 }
@@ -217,7 +231,8 @@ static void format_time_iso(const struct tmd_time *t, char *buf, size_t bufsz)
     const struct tm *tm;
     time_t           seconds = (time_t)t->sec;
 
-    if (!t->present || (int64_t)seconds != t->sec) {
+    if (!t->present || (int64_t)seconds != t->sec)
+    {
         buf[0] = '\0';
         return;
     }
@@ -226,25 +241,30 @@ static void format_time_iso(const struct tmd_time *t, char *buf, size_t bufsz)
      * term of the condition above: an assignment inside an `if` reads as a
      * comparison typo even when it is not one. */
     tm = gmtime_r(&seconds, &tmbuf);
-    if (!tm) {
+    if (!tm)
+    {
         buf[0] = '\0';
         return;
     }
-    if (t->nsec) {
+    if (t->nsec)
+    {
         char stamp[32]; /* a 10-digit year makes this 25 characters */
 
         /* An empty string is this function's existing way of saying "cannot be
          * represented"; see the !present branch above. */
-        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S", tm)) {
+        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S", tm))
+        {
             buf[0] = '\0';
-        } else {
+        } else
+        {
             /* Reduced modulo a second so the compiler can see that %09u is
              * nine digits and not ten. */
             unsigned nsec = t->nsec % 1000000000u;
 
             (void)snprintf(buf, bufsz, "%s.%09uZ", stamp, nsec);
         }
-    } else if (!TIME_FITS(buf, bufsz, "%Y-%m-%dT%H:%M:%SZ", tm)) {
+    } else if (!TIME_FITS(buf, bufsz, "%Y-%m-%dT%H:%M:%SZ", tm))
+    {
         buf[0] = '\0';
     }
 }
@@ -263,11 +283,13 @@ static void owner_string(const struct tmd_entry *e, const struct tmd_options *op
     char        user_buf[32];
     char        group_buf[32];
 
-    if (!user) {
+    if (!user)
+    {
         (void)snprintf(user_buf, sizeof(user_buf), "%lld", (long long)e->uid);
         user = user_buf;
     }
-    if (!group) {
+    if (!group)
+    {
         (void)snprintf(group_buf, sizeof(group_buf), "%lld", (long long)e->gid);
         group = group_buf;
     }
@@ -279,12 +301,15 @@ static void owner_string(const struct tmd_entry *e, const struct tmd_options *op
 static void size_string(const struct tmd_entry *e, const struct tmd_options *opt,
                         char *buf, size_t bufsz)
 {
-    if (e->has_dev) {
+    if (e->has_dev)
+    {
         (void)snprintf(buf, bufsz, "%u,%u", e->devmajor, e->devminor);
-    } else if (opt->human) {
+    } else if (opt->human)
+    {
         char human[32];
         (void)snprintf(buf, bufsz, "%s", tmd_human_size(e->size, human, sizeof(human)));
-    } else {
+    } else
+    {
         (void)snprintf(buf, bufsz, "%llu", (unsigned long long)e->size);
     }
 }
@@ -292,10 +317,12 @@ static void size_string(const struct tmd_entry *e, const struct tmd_options *opt
 static const char *entry_color(const struct tmd_entry *e,
                                const struct tmd_options *opt)
 {
-    if (!opt->color) {
+    if (!opt->color)
+    {
         return NULL;
     }
-    switch (e->kind) {
+    switch (e->kind)
+    {
     case TMD_KIND_DIR:
         return C_DIR;
     case TMD_KIND_SYMLINK:
@@ -343,17 +370,21 @@ char *tmd_render_listing_line(const struct tmd_entry *e,
     tmd_buf_addf(&line, "%s  %-17s %10s  %-20s  ", mode, owner, size, when);
 
     color = entry_color(e, opt);
-    if (color) {
+    if (color)
+    {
         tmd_buf_addstr(&line, color);
     }
     tmd_buf_addstr(&line, e->path);
-    if (color) {
+    if (color)
+    {
         tmd_buf_addstr(&line, C_RESET);
     }
 
-    if (e->kind == TMD_KIND_SYMLINK && e->linkpath && e->linkpath[0]) {
+    if (e->kind == TMD_KIND_SYMLINK && e->linkpath && e->linkpath[0])
+    {
         tmd_buf_addf(&line, " -> %s", e->linkpath);
-    } else if (e->kind == TMD_KIND_HARDLINK && e->linkpath && e->linkpath[0]) {
+    } else if (e->kind == TMD_KIND_HARDLINK && e->linkpath && e->linkpath[0])
+    {
         tmd_buf_addf(&line, " link to %s", e->linkpath);
     }
 
@@ -369,7 +400,8 @@ char *tmd_render_listing_line(const struct tmd_entry *e,
      * one is, which is the part nothing else answers. -l and the machine
      * formats already carry it, so this only fills in the default listing.
      */
-    if (opt->nmatch > 0) {
+    if (opt->nmatch > 0)
+    {
         tmd_buf_addf(&line, "   @%llu", (unsigned long long)e->offset);
     }
 
@@ -455,45 +487,58 @@ static void stat_note_time(struct stats *s, const struct tmd_time *mt)
     size_t slot;
     size_t probes;
 
-    if (!mt->present) {
+    if (!mt->present)
+    {
         s->no_time++;
         return;
     }
 
-    if (!s->have_time) {
+    if (!s->have_time)
+    {
         s->earliest = mt->sec;
         s->latest = mt->sec;
         s->have_time = true;
-    } else {
-        if (mt->sec < s->earliest) {
+    } else
+    {
+        if (mt->sec < s->earliest)
+        {
             s->earliest = mt->sec;
         }
-        if (mt->sec > s->latest) {
+        if (mt->sec > s->latest)
+        {
             s->latest = mt->sec;
         }
     }
 
-    if (mt->sec == 0) {
+    if (mt->sec == 0)
+    {
         s->zero_time++;
-    } else if (mt->sec < 0) {
+    } else if (mt->sec < 0)
+    {
         s->negative_time++;
-    } else if (mt->sec < TAR_EPOCH) {
+    } else if (mt->sec < TAR_EPOCH)
+    {
         s->pre_tar_time++;
     }
-    if (mt->sec > (int64_t)time(NULL)) {
+    if (mt->sec > (int64_t)time(NULL))
+    {
         s->future_time++;
     }
 
     slot = time_slot(mt->sec);
-    for (probes = 0; probes < STAT_TIME_SLOTS; probes++) {
+    for (probes = 0; probes < STAT_TIME_SLOTS; probes++)
+    {
         struct stat_time *e = &s->times[slot];
 
-        if (e->used && e->sec == mt->sec) {
+        if (e->used && e->sec == mt->sec)
+        {
             e->count++;
             return;
         }
-        if (!e->used) {
-            if (s->ndistinct >= STAT_TIME_LIMIT) {
+        if (!e->used)
+        {
+            if (s->ndistinct >= STAT_TIME_LIMIT)
+            {
                 s->distinct_overflow = true;
                 return;
             }
@@ -515,21 +560,26 @@ static void stat_note_size(struct stats *s, const struct tmd_entry *e)
     size_t i;
     size_t at;
 
-    if (s->ntop == STAT_TOP && e->size <= s->top[s->ntop - 1].size) {
+    if (s->ntop == STAT_TOP && e->size <= s->top[s->ntop - 1].size)
+    {
         return;
     }
     at = s->ntop;
-    for (i = 0; i < s->ntop; i++) {
-        if (e->size > s->top[i].size) {
+    for (i = 0; i < s->ntop; i++)
+    {
+        if (e->size > s->top[i].size)
+        {
             at = i;
             break;
         }
     }
-    if (s->ntop == STAT_TOP) {
+    if (s->ntop == STAT_TOP)
+    {
         free(s->top[STAT_TOP - 1].path);
         s->ntop--;
     }
-    for (i = s->ntop; i > at; i--) {
+    for (i = s->ntop; i > at; i--)
+    {
         s->top[i] = s->top[i - 1];
     }
     s->top[at].size = e->size;
@@ -553,10 +603,12 @@ static void stat_free(struct stats *s)
 {
     size_t i;
 
-    if (!s) {
+    if (!s)
+    {
         return;
     }
-    for (i = 0; i < s->ntop; i++) {
+    for (i = 0; i < s->ntop; i++)
+    {
         free(s->top[i].path);
     }
     free(s);
@@ -584,9 +636,11 @@ void tmd_json_escape(struct tmd_buf *b, const char *s)
     size_t               i;
 
     tmd_buf_addc(b, '"');
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < len; i++)
+    {
         unsigned char c = p[i];
-        switch (c) {
+        switch (c)
+        {
         case '"':  tmd_buf_addstr(b, "\\\""); break;
         case '\\': tmd_buf_addstr(b, "\\\\"); break;
         case '\b': tmd_buf_addstr(b, "\\b"); break;
@@ -595,9 +649,11 @@ void tmd_json_escape(struct tmd_buf *b, const char *s)
         case '\r': tmd_buf_addstr(b, "\\r"); break;
         case '\t': tmd_buf_addstr(b, "\\t"); break;
         default:
-            if (c < 0x20 || (c >= 0x80 && !utf8)) {
+            if (c < 0x20 || (c >= 0x80 && !utf8))
+            {
                 tmd_buf_addf(b, "\\u%04x", c);
-            } else {
+            } else
+            {
                 tmd_buf_addc(b, (char)c);
             }
             break;
@@ -624,7 +680,8 @@ static void json_mode_bits(struct tmd_buf *b, uint32_t mode)
                  (mode & 04000) ? "true" : "false",
                  (mode & 02000) ? "true" : "false",
                  (mode & 01000) ? "true" : "false");
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 3; i++)
+    {
         unsigned shift = 6 - i * 3;
 
         tmd_buf_addf(b, ", \"%s\": {\"read\": %s, \"write\": %s, \"execute\": %s}",
@@ -688,13 +745,16 @@ static void json_encoding(struct tmd_buf *b, const char *key, const char *s)
 {
     size_t bad = 0;
 
-    if (!s) {
+    if (!s)
+    {
         return;
     }
-    if (tmd_utf8_first_invalid(s, strlen(s), &bad)) {
+    if (tmd_utf8_first_invalid(s, strlen(s), &bad))
+    {
         tmd_buf_addf(b, ", \"%s\": {\"utf8\": false, \"first_invalid_byte\": %zu}",
                      key, bad);
-    } else {
+    } else
+    {
         tmd_buf_addf(b, ", \"%s\": {\"utf8\": true}", key);
     }
 }
@@ -718,19 +778,23 @@ static void json_xattrs(struct tmd_buf *b, const struct tmd_entry *e)
     size_t                   i;
     bool                     any = false;
 
-    for (i = 0; i < e->npax; i++) {
+    for (i = 0; i < e->npax; i++)
+    {
         const char *key = e->pax[i].key;
         const char *name = NULL;
         size_t      k;
 
-        for (k = 0; k < sizeof(prefixes) / sizeof(*prefixes); k++) {
+        for (k = 0; k < sizeof(prefixes) / sizeof(*prefixes); k++)
+        {
             size_t n = strlen(prefixes[k]);
 
-            if (strncmp(key, prefixes[k], n) == 0 && key[n] != '\0') {
+            if (strncmp(key, prefixes[k], n) == 0 && key[n] != '\0')
+            {
                 name = key + n;
             }
         }
-        if (!name) {
+        if (!name)
+        {
             continue;
         }
 
@@ -744,10 +808,12 @@ static void json_xattrs(struct tmd_buf *b, const struct tmd_entry *e)
             struct tmd_buf decoded;
 
             tmd_buf_init(&decoded);
-            if (tmd_base64_decode(e->pax[i].value, &decoded)) {
+            if (tmd_base64_decode(e->pax[i].value, &decoded))
+            {
                 tmd_buf_addstr(b, ", \"decoded\": ");
                 tmd_json_escape(b, decoded.data ? decoded.data : "");
-            } else {
+            } else
+            {
                 tmd_buf_addstr(b, ", \"decoded\": null, \"decode_error\": "
                                   "\"not valid base64\"");
             }
@@ -755,7 +821,8 @@ static void json_xattrs(struct tmd_buf *b, const struct tmd_entry *e)
         }
         tmd_buf_addc(b, '}');
     }
-    if (any) {
+    if (any)
+    {
         tmd_buf_addc(b, '}');
     }
 }
@@ -794,63 +861,79 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
     json_blocks(&b, e);
 
     format_time_iso(&e->mtime, stamp, sizeof(stamp));
-    if (stamp[0]) {
+    if (stamp[0])
+    {
         tmd_buf_addf(&b, ", \"mtime\": \"%s\"", stamp);
         tmd_buf_addf(&b, ", \"mtime_epoch\": %lld", (long long)e->mtime.sec);
-    } else {
+    } else
+    {
         tmd_buf_addstr(&b, ", \"mtime\": null");
-        if (e->mtime.present) {
+        if (e->mtime.present)
+        {
             tmd_buf_addf(&b, ", \"mtime_epoch\": %lld", (long long)e->mtime.sec);
         }
     }
-    if (e->mtime.source) {
+    if (e->mtime.source)
+    {
         tmd_buf_addf(&b, ", \"mtime_source\": \"%s\"", e->mtime.source);
     }
-    if (e->atime.present) {
+    if (e->atime.present)
+    {
         format_time_iso(&e->atime, stamp, sizeof(stamp));
         tmd_buf_addf(&b, ", \"atime\": \"%s\"", stamp);
         tmd_buf_addf(&b, ", \"atime_epoch\": %lld", (long long)e->atime.sec);
-        if (e->atime.source) {
+        if (e->atime.source)
+        {
             tmd_buf_addf(&b, ", \"atime_source\": \"%s\"", e->atime.source);
         }
     }
-    if (e->ctime.present) {
+    if (e->ctime.present)
+    {
         format_time_iso(&e->ctime, stamp, sizeof(stamp));
         tmd_buf_addf(&b, ", \"ctime\": \"%s\"", stamp);
         tmd_buf_addf(&b, ", \"ctime_epoch\": %lld", (long long)e->ctime.sec);
-        if (e->ctime.source) {
+        if (e->ctime.source)
+        {
             tmd_buf_addf(&b, ", \"ctime_source\": \"%s\"", e->ctime.source);
         }
     }
-    if (e->created.present) {
+    if (e->created.present)
+    {
         format_time_iso(&e->created, stamp, sizeof(stamp));
         tmd_buf_addf(&b, ", \"created\": \"%s\"", stamp);
         tmd_buf_addf(&b, ", \"created_epoch\": %lld", (long long)e->created.sec);
-        if (e->created.source) {
+        if (e->created.source)
+        {
             tmd_buf_addf(&b, ", \"created_source\": \"%s\"", e->created.source);
         }
     }
 
-    if (e->path_source) {
+    if (e->path_source)
+    {
         tmd_buf_addf(&b, ", \"path_source\": \"%s\"", e->path_source);
     }
     json_encoding(&b, "path_encoding", e->path);
-    if (e->linkpath && e->linkpath[0]) {
+    if (e->linkpath && e->linkpath[0])
+    {
         tmd_buf_addstr(&b, ", \"linkpath\": ");
         tmd_json_escape(&b, e->linkpath);
-        if (e->linkpath_source) {
+        if (e->linkpath_source)
+        {
             tmd_buf_addf(&b, ", \"linkpath_source\": \"%s\"", e->linkpath_source);
         }
         json_encoding(&b, "linkpath_encoding", e->linkpath);
     }
-    if (e->has_dev) {
+    if (e->has_dev)
+    {
         tmd_buf_addf(&b, ", \"devmajor\": %u, \"devminor\": %u",
                      e->devmajor, e->devminor);
     }
-    if (e->is_sparse) {
+    if (e->is_sparse)
+    {
         tmd_buf_addf(&b, ", \"sparse\": {\"realsize\": %llu, \"segments\": [",
                      (unsigned long long)e->realsize);
-        for (i = 0; i < e->nsparse; i++) {
+        for (i = 0; i < e->nsparse; i++)
+        {
             tmd_buf_addf(&b, "%s{\"offset\": %llu, \"bytes\": %llu}",
                          i ? ", " : "",
                          (unsigned long long)e->sparse[i].offset,
@@ -875,18 +958,24 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
                  e->chksum_stored, e->chksum_unsigned,
                  e->chksum_unsigned, (long)e->chksum_signed,
                  e->chksum_ok ? "true" : "false");
-    if (e->chksum_ok && e->chksum_stored == e->chksum_unsigned) {
+    if (e->chksum_ok && e->chksum_stored == e->chksum_unsigned)
+    {
         tmd_buf_addstr(&b, "\"unsigned\"}");
-    } else if (e->chksum_ok && (int32_t)e->chksum_stored == e->chksum_signed) {
+    } else if (e->chksum_ok && (int32_t)e->chksum_stored == e->chksum_signed)
+    {
         tmd_buf_addstr(&b, "\"signed\"}");
-    } else {
+    } else
+    {
         tmd_buf_addstr(&b, "null}");
     }
 
-    if (e->npax > 0) {
+    if (e->npax > 0)
+    {
         tmd_buf_addstr(&b, ", \"pax\": {");
-        for (i = 0; i < e->npax; i++) {
-            if (i) {
+        for (i = 0; i < e->npax; i++)
+        {
+            if (i)
+            {
                 tmd_buf_addstr(&b, ", ");
             }
             tmd_json_escape(&b, e->pax[i].key);
@@ -897,7 +986,8 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
     }
     json_xattrs(&b, e);
 
-    if (opt->headers) {
+    if (opt->headers)
+    {
         tmd_buf_addstr(&b, ", \"raw\": {");
         tmd_buf_addstr(&b, "\"name\": ");
         tmd_json_escape(&b, e->raw.name);
@@ -919,7 +1009,8 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         tmd_json_escape(&b, e->raw.magic);
         tmd_buf_addstr(&b, ", \"version\": ");
         tmd_json_escape(&b, e->raw.version);
-        if (e->raw.block_present) {
+        if (e->raw.block_present)
+        {
             char    *encoded = tmd_base64_encode(e->raw.block, sizeof(e->raw.block));
             uint64_t hdr = entry_header_bytes(e);
 
@@ -955,17 +1046,21 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
          * be -- `block_base64` alone described the last block and left the two
          * or three before it to be inferred from their effects.
          */
-        if (e->n_ext_blocks > 0) {
+        if (e->n_ext_blocks > 0)
+        {
             tmd_buf_addstr(&b, ", \"extension_blocks\": [");
-            for (i = 0; i < e->n_ext_blocks; i++) {
+            for (i = 0; i < e->n_ext_blocks; i++)
+            {
                 char *enc = tmd_base64_encode(e->ext_blocks[i].bytes,
                                               sizeof(e->ext_blocks[i].bytes));
 
                 tmd_buf_addf(&b, "%s{\"offset\": %llu, \"kind\": ", i ? ", " : "",
                              (unsigned long long)e->ext_blocks[i].offset);
-                if (e->ext_blocks[i].kind) {
+                if (e->ext_blocks[i].kind)
+                {
                     tmd_buf_addf(&b, "\"%c\"", e->ext_blocks[i].kind);
-                } else {
+                } else
+                {
                     /* A payload block of the header above it, not a header. */
                     tmd_buf_addstr(&b, "null");
                 }
@@ -978,10 +1073,13 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         tmd_buf_addc(&b, '}');
     }
 
-    if (e->nwarnings > 0) {
+    if (e->nwarnings > 0)
+    {
         tmd_buf_addstr(&b, ", \"warnings\": [");
-        for (i = 0; i < e->nwarnings; i++) {
-            if (i) {
+        for (i = 0; i < e->nwarnings; i++)
+        {
+            if (i)
+            {
                 tmd_buf_addstr(&b, ", ");
             }
             tmd_buf_addf(&b, "{\"code\": \"%s\", \"text\": ", e->warnings[i].code);
@@ -1007,22 +1105,28 @@ static void csv_field(struct tmd_buf *b, const char *s)
     bool   needs_quotes = false;
     size_t i;
 
-    if (!s) {
+    if (!s)
+    {
         s = "";
     }
-    for (i = 0; s[i]; i++) {
-        if (s[i] == ',' || s[i] == '"' || s[i] == '\n' || s[i] == '\r') {
+    for (i = 0; s[i]; i++)
+    {
+        if (s[i] == ',' || s[i] == '"' || s[i] == '\n' || s[i] == '\r')
+        {
             needs_quotes = true;
         }
     }
 
-    if (!needs_quotes) {
+    if (!needs_quotes)
+    {
         tmd_buf_addstr(b, s);
         return;
     }
     tmd_buf_addc(b, '"');
-    for (i = 0; s[i]; i++) {
-        if (s[i] == '"') {
+    for (i = 0; s[i]; i++)
+    {
+        if (s[i] == '"')
+        {
             tmd_buf_addc(b, '"');
         }
         tmd_buf_addc(b, s[i]);
@@ -1088,9 +1192,11 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
                   (e->uname && e->uname[0]) ? e->uname : "-", (long long)e->uid,
                   (e->gname && e->gname[0]) ? e->gname : "-", (long long)e->gid);
 
-    if (e->has_dev) {
+    if (e->has_dev)
+    {
         (void)fprintf(out, "  device      %u, %u\n", e->devmajor, e->devminor);
-    } else {
+    } else
+    {
         (void)fprintf(out, "  size        %llu bytes (%s)\n",
                       (unsigned long long)e->size,
                       tmd_human_size(e->size, human, sizeof(human)));
@@ -1102,20 +1208,24 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
 
     format_time(&e->mtime, opt, stamp, sizeof(stamp));
     (void)fprintf(out, "  modified    %s\n", stamp);
-    if (e->atime.present) {
+    if (e->atime.present)
+    {
         format_time(&e->atime, opt, stamp, sizeof(stamp));
         (void)fprintf(out, "  accessed    %s\n", stamp);
     }
-    if (e->ctime.present) {
+    if (e->ctime.present)
+    {
         format_time(&e->ctime, opt, stamp, sizeof(stamp));
         (void)fprintf(out, "  changed     %s\n", stamp);
     }
-    if (e->created.present) {
+    if (e->created.present)
+    {
         format_time(&e->created, opt, stamp, sizeof(stamp));
         (void)fprintf(out, "  created     %s\n", stamp);
     }
 
-    if (e->linkpath && e->linkpath[0]) {
+    if (e->linkpath && e->linkpath[0])
+    {
         (void)fprintf(out, "  links to    %s (%s)\n", e->linkpath,
                       e->linkpath_source ? e->linkpath_source : "header");
     }
@@ -1126,25 +1236,30 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
                   e->chksum_ok ? "ok" : "MISMATCH", e->chksum_stored,
                   e->chksum_unsigned);
 
-    if (e->is_sparse) {
+    if (e->is_sparse)
+    {
         (void)fprintf(out, "  sparse      %zu data segment%s, expands to %llu bytes\n",
                       e->nsparse, e->nsparse == 1 ? "" : "s",
                       (unsigned long long)(e->realsize ? e->realsize : e->size));
-        for (i = 0; i < e->nsparse && i < 16; i++) {
+        for (i = 0; i < e->nsparse && i < 16; i++)
+        {
             (void)fprintf(out, "                offset %llu, %llu bytes\n",
                           (unsigned long long)e->sparse[i].offset,
                           (unsigned long long)e->sparse[i].numbytes);
         }
-        if (e->nsparse > 16) {
+        if (e->nsparse > 16)
+        {
             (void)fprintf(out, "                ... and %zu more\n", e->nsparse - 16);
         }
     }
 
-    for (i = 0; i < e->npax; i++) {
+    for (i = 0; i < e->npax; i++)
+    {
         (void)fprintf(out, "  pax         %s = %s\n", e->pax[i].key, e->pax[i].value);
     }
 
-    if (opt->headers) {
+    if (opt->headers)
+    {
         (void)fprintf(out, "  raw header\n");
         (void)fprintf(out, "    name      \"%s\"\n", e->raw.name);
         (void)fprintf(out, "    prefix    \"%s\"\n", e->raw.prefix);
@@ -1166,7 +1281,8 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
                       e->raw.devmajor, e->raw.devminor);
     }
 
-    for (i = 0; i < e->nwarnings; i++) {
+    for (i = 0; i < e->nwarnings; i++)
+    {
         (void)fprintf(out, "  warning     %s\n", e->warnings[i].text);
     }
 
@@ -1179,7 +1295,8 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
 
 static const char *format_long_name(enum tmd_format f)
 {
-    switch (f) {
+    switch (f)
+    {
     case TMD_FMT_V7:    return "v7 (pre-POSIX)";
     case TMD_FMT_USTAR: return "POSIX ustar (POSIX.1-1988)";
     case TMD_FMT_STAR:  return "star";
@@ -1204,7 +1321,8 @@ static const char *format_long_name(enum tmd_format f)
  */
 static const char *generation_name(enum tmd_format f)
 {
-    switch (f) {
+    switch (f)
+    {
     case TMD_FMT_V7:    return "1st — Seventh Edition Unix tar (1979)";
     case TMD_FMT_USTAR: return "2nd — POSIX ustar, IEEE 1003.1-1988";
     case TMD_FMT_GNU:   return "2nd, GNU branch — GNU tar's own extensions (1990s)";
@@ -1216,7 +1334,8 @@ static const char *generation_name(enum tmd_format f)
 
 static const char *generation_note(enum tmd_format f)
 {
-    switch (f) {
+    switch (f)
+    {
     case TMD_FMT_V7:
         return "100-byte paths, no magic, no owner names, no device numbers.\n"
                "                    Only regular files, hard links and symlinks "
@@ -1277,19 +1396,24 @@ static void print_portability(FILE *out, const struct tmd_archive *a)
                             a->counts[TMD_KIND_FIFO] > 0 ||
                             a->counts[TMD_KIND_CONTIGUOUS] > 0;
 
-    if (needs_pax) {
+    if (needs_pax)
+    {
         (void)fprintf(out, "  needs a reader   that understands pax extended headers\n"
                            "                   (GNU tar 1.14+, bsdtar, star, POSIX pax)\n");
-    } else if (needs_gnu) {
+    } else if (needs_gnu)
+    {
         (void)fprintf(out, "  needs a reader   that understands GNU's extensions\n"
                            "                   (GNU tar, bsdtar, star)\n");
-    } else if (needs_ustar) {
+    } else if (needs_ustar)
+    {
         (void)fprintf(out, "  needs a reader   any POSIX ustar tar; nothing here is "
                            "an extension\n");
-    } else {
+    } else
+    {
         (void)fprintf(out, "  needs a reader   any tar at all — this uses nothing "
                            "beyond v7\n");
-        if (beyond_v7_types) {
+        if (beyond_v7_types)
+        {
             (void)fprintf(out, "                   (the directory and FIFO "
                                "typeflags postdate v7 itself,\n"
                                "                   but every tar since 1988 reads "
@@ -1297,11 +1421,13 @@ static void print_portability(FILE *out, const struct tmd_archive *a)
         }
     }
 
-    if (f->paths_over_255) {
+    if (f->paths_over_255)
+    {
         (void)fprintf(out, "                   %zu path%s cannot be expressed in a "
                            "ustar header at all\n",
                       f->paths_over_255, f->paths_over_255 == 1 ? "" : "s");
-    } else if (f->paths_over_100) {
+    } else if (f->paths_over_100)
+    {
         (void)fprintf(out, "                   %zu path%s over 100 bytes; a v7 "
                            "reader would truncate %s\n",
                       f->paths_over_100, f->paths_over_100 == 1 ? "" : "s",
@@ -1343,10 +1469,15 @@ static void print_order(FILE *out, const struct tmd_archive *a, int width)
     const struct tmd_features *f = &a->features;
     bool has_dirs = a->counts[TMD_KIND_DIR] > 0;
 
-    if (a->entries < 2) {
+    if (a->entries < 2)
+    {
         return; /* one member is in every order at once */
     }
 
+    if (a->codec)
+    {
+        (void)fprintf(out, "  %-*s%s\n", width, "compression", a->codec);
+    }
     (void)fprintf(out, "  %-*s%s%s\n", width, "member order",
                   f->order_sorted ? "lexicographic by path"
                                   : "not in path order",
@@ -1354,20 +1485,24 @@ static void print_order(FILE *out, const struct tmd_archive *a, int width)
                            : "; no directory members, so it was written from a "
                              "list of files");
 
-    if (f->nroots == 1 && !f->roots_truncated) {
+    if (f->nroots == 1 && !f->roots_truncated)
+    {
         (void)fprintf(out, "  %-*sone entry: %s\n", width, "top level",
                       f->roots[0]);
-    } else if (f->roots_truncated) {
+    } else if (f->roots_truncated)
+    {
         (void)fprintf(out, "  %-*smore than %zu entries — extracting scatters "
                            "them into the current directory\n",
                       width, "top level",
                       sizeof(f->roots) / sizeof(f->roots[0]));
-    } else {
+    } else
+    {
         struct tmd_buf list;
         size_t         i;
 
         tmd_buf_init(&list);
-        for (i = 0; i < f->nroots; i++) {
+        for (i = 0; i < f->nroots; i++)
+        {
             tmd_buf_addf(&list, "%s%s", list.len ? ", " : "", f->roots[i]);
         }
         (void)fprintf(out, "  %-*s%zu entries: %s\n", width, "top level",
@@ -1390,23 +1525,27 @@ static void print_extraction(FILE *out, const struct tmd_archive *a, int width)
     uint64_t total = f->escape_absolute + f->escape_traversal + f->escape_link;
     struct tmd_buf parts;
 
-    if (total == 0) {
+    if (total == 0)
+    {
         (void)fprintf(out, "  %-*s%s\n", width, "extraction",
                       "every member stays inside the extraction directory");
         return;
     }
 
     tmd_buf_init(&parts);
-    if (f->escape_absolute) {
+    if (f->escape_absolute)
+    {
         tmd_buf_addf(&parts, "%llu absolute",
                      (unsigned long long)f->escape_absolute);
     }
-    if (f->escape_traversal) {
+    if (f->escape_traversal)
+    {
         tmd_buf_addf(&parts, "%s%llu climbing out with \"..\"",
                      parts.len ? ", " : "",
                      (unsigned long long)f->escape_traversal);
     }
-    if (f->escape_link) {
+    if (f->escape_link)
+    {
         tmd_buf_addf(&parts, "%s%llu link%s pointing outside",
                      parts.len ? ", " : "",
                      (unsigned long long)f->escape_link,
@@ -1421,7 +1560,8 @@ static void print_extraction(FILE *out, const struct tmd_archive *a, int width)
 
 static void text_matched_line(struct tmd_render *rd, int label_width)
 {
-    if (rd->opt->nmatch == 0) {
+    if (rd->opt->nmatch == 0)
+    {
         return;
     }
     /* The label column is passed in because the summary and the -i report use
@@ -1449,7 +1589,8 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
 
     (void)fprintf(out, "\n%s\n", a->name);
 
-    if (a->file_size) {
+    if (a->file_size)
+    {
         (void)fprintf(out, "  size             %llu bytes (%s)\n",
                       (unsigned long long)a->file_size,
                       tmd_human_size(a->file_size, human, sizeof(human)));
@@ -1460,8 +1601,10 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     (void)fprintf(out, "                   %s\n", generation_note(a->format));
 
     (void)fprintf(out, "  dialects seen    ");
-    for (k = TMD_FMT_V7; k <= TMD_FMT_PAX; k++) {
-        if (!a->formats[k]) {
+    for (k = TMD_FMT_V7; k <= TMD_FMT_PAX; k++)
+    {
+        if (!a->formats[k])
+        {
             continue;
         }
         (void)fprintf(out, "%s%s", first ? "" : ", ",
@@ -1470,9 +1613,11 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     }
     (void)fprintf(out, "%s\n", first ? "none" : "");
 
-    if (a->writer) {
+    if (a->writer)
+    {
         (void)fprintf(out, "  written by       %s (inferred)\n", a->writer);
-    } else {
+    } else
+    {
         (void)fprintf(out, "  written by       no tool-specific fingerprint in this "
                            "archive\n");
     }
@@ -1483,51 +1628,63 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
         struct tmd_buf list;
 
         tmd_buf_init(&list);
-        if (f->gnu_longname) {
+        if (f->gnu_longname)
+        {
             tmd_buf_addf(&list, "%sGNU long name blocks (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->gnu_longname);
         }
-        if (f->gnu_longlink) {
+        if (f->gnu_longlink)
+        {
             tmd_buf_addf(&list, "%sGNU long link blocks (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->gnu_longlink);
         }
-        if (f->pax_headers) {
+        if (f->pax_headers)
+        {
             tmd_buf_addf(&list, "%spax extended headers (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->pax_headers);
         }
-        if (f->pax_globals) {
+        if (f->pax_globals)
+        {
             tmd_buf_addf(&list, "%spax global headers (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->pax_globals);
         }
-        if (f->sparse_gnu_old) {
+        if (f->sparse_gnu_old)
+        {
             tmd_buf_addf(&list, "%sGNU sparse, old format (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->sparse_gnu_old);
         }
-        if (f->sparse_pax) {
+        if (f->sparse_pax)
+        {
             tmd_buf_addf(&list, "%sGNU sparse, pax format (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->sparse_pax);
         }
-        if (f->prefix_used) {
+        if (f->prefix_used)
+        {
             tmd_buf_addf(&list, "%sustar path prefix (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->prefix_used);
         }
-        if (f->base256_fields) {
+        if (f->base256_fields)
+        {
             tmd_buf_addf(&list, "%sbase-256 numeric fields (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->base256_fields);
         }
-        if (f->dumpdirs) {
+        if (f->dumpdirs)
+        {
             tmd_buf_addf(&list, "%sGNU incremental dumpdirs (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->dumpdirs);
         }
-        if (f->multivolume) {
+        if (f->multivolume)
+        {
             tmd_buf_addf(&list, "%smulti-volume continuations (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->multivolume);
         }
-        if (f->volume_labels) {
+        if (f->volume_labels)
+        {
             tmd_buf_addf(&list, "%svolume labels (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->volume_labels);
         }
-        if (f->xattr_members) {
+        if (f->xattr_members)
+        {
             tmd_buf_addf(&list, "%sextended-attribute members (%llu)",
                          list.len ? ", " : "", (unsigned long long)f->xattr_members);
         }
@@ -1535,11 +1692,13 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
         tmd_buf_free(&list);
     }
 
-    if (f->npax_keys) {
+    if (f->npax_keys)
+    {
         size_t i;
 
         (void)fprintf(out, "  pax keys         ");
-        for (i = 0; i < f->npax_keys; i++) {
+        for (i = 0; i < f->npax_keys; i++)
+        {
             (void)fprintf(out, "%s%s", i ? ", " : "", f->pax_keys[i]);
         }
         (void)fprintf(out, "%s\n", f->pax_keys_truncated ? ", ..." : "");
@@ -1547,9 +1706,11 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
 
     /* --- what the metadata can express ----------------------------------- */
     (void)fprintf(out, "  paths            longest %zu bytes", f->max_path);
-    if (f->paths_over_255) {
+    if (f->paths_over_255)
+    {
         (void)fprintf(out, "; %zu over the ustar limit", f->paths_over_255);
-    } else if (f->paths_over_100) {
+    } else if (f->paths_over_100)
+    {
         (void)fprintf(out, "; %zu over the v7 limit", f->paths_over_100);
     }
     (void)fputc('\n', out);
@@ -1566,12 +1727,14 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
                   (long long)f->max_uid, (long long)f->max_gid);
 
     /* --- physical layout -------------------------------------------------- */
-    if (a->record_blocks) {
+    if (a->record_blocks)
+    {
         (void)fprintf(out, "  blocking         %u blocks of %d bytes (%u), inferred "
                            "from the length\n",
                       a->record_blocks, TMD_BLOCK_SIZE,
                       a->record_blocks * TMD_BLOCK_SIZE);
-    } else {
+    } else
+    {
         (void)fprintf(out, "  blocking         not a multiple of a standard record "
                            "size\n");
     }
@@ -1579,7 +1742,8 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     (void)fprintf(out, "  end marker       %s\n",
                   a->eof_marker ? "present (two zero blocks)"
                                 : "MISSING — the archive is truncated");
-    if (a->trailing_bytes) {
+    if (a->trailing_bytes)
+    {
         (void)fprintf(out, "  after the marker %llu bytes%s\n",
                       (unsigned long long)a->trailing_bytes,
                       a->trailing_garbage
@@ -1594,36 +1758,43 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
         struct tmd_buf parts;
 
         tmd_buf_init(&parts);
-        if (a->counts[TMD_KIND_FILE]) {
+        if (a->counts[TMD_KIND_FILE])
+        {
             tmd_buf_addf(&parts, "%llu file%s",
                          (unsigned long long)a->counts[TMD_KIND_FILE],
                          a->counts[TMD_KIND_FILE] == 1 ? "" : "s");
         }
-        if (a->counts[TMD_KIND_DIR]) {
+        if (a->counts[TMD_KIND_DIR])
+        {
             tmd_buf_addf(&parts, "%s%llu director%s", parts.len ? ", " : "",
                          (unsigned long long)a->counts[TMD_KIND_DIR],
                          a->counts[TMD_KIND_DIR] == 1 ? "y" : "ies");
         }
-        if (a->counts[TMD_KIND_SYMLINK]) {
+        if (a->counts[TMD_KIND_SYMLINK])
+        {
             tmd_buf_addf(&parts, "%s%llu symlink%s", parts.len ? ", " : "",
                          (unsigned long long)a->counts[TMD_KIND_SYMLINK],
                          a->counts[TMD_KIND_SYMLINK] == 1 ? "" : "s");
         }
-        if (a->counts[TMD_KIND_HARDLINK]) {
+        if (a->counts[TMD_KIND_HARDLINK])
+        {
             tmd_buf_addf(&parts, "%s%llu hard link%s", parts.len ? ", " : "",
                          (unsigned long long)a->counts[TMD_KIND_HARDLINK],
                          a->counts[TMD_KIND_HARDLINK] == 1 ? "" : "s");
         }
-        if (devices) {
+        if (devices)
+        {
             tmd_buf_addf(&parts, "%s%llu device node%s", parts.len ? ", " : "",
                          (unsigned long long)devices, devices == 1 ? "" : "s");
         }
-        if (a->counts[TMD_KIND_FIFO]) {
+        if (a->counts[TMD_KIND_FIFO])
+        {
             tmd_buf_addf(&parts, "%s%llu FIFO%s", parts.len ? ", " : "",
                          (unsigned long long)a->counts[TMD_KIND_FIFO],
                          a->counts[TMD_KIND_FIFO] == 1 ? "" : "s");
         }
-        if (parts.len) {
+        if (parts.len)
+        {
             (void)fprintf(out, " (%s)", parts.data);
         }
         tmd_buf_free(&parts);
@@ -1633,7 +1804,8 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     (void)fprintf(out, "  content          %llu bytes (%s) when extracted\n",
                   (unsigned long long)a->total_size,
                   tmd_human_size(a->total_size, human, sizeof(human)));
-    if (sparse_members > 0) {
+    if (sparse_members > 0)
+    {
         (void)fprintf(out, "                   %llu of those members %s sparse, so "
                            "the archive is much smaller\n",
                       (unsigned long long)sparse_members,
@@ -1641,18 +1813,22 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     }
 
     /* --- integrity -------------------------------------------------------- */
-    if (a->bad_checksums) {
+    if (a->bad_checksums)
+    {
         (void)fprintf(out, "  integrity        %llu header checksum%s did not match\n",
                       (unsigned long long)a->bad_checksums,
                       a->bad_checksums == 1 ? "" : "s");
-    } else if (a->eof_marker && !a->trailing_garbage) {
+    } else if (a->eof_marker && !a->trailing_garbage)
+    {
         (void)fprintf(out, "  integrity        every header checksum matched\n");
-    } else {
+    } else
+    {
         (void)fprintf(out, "  integrity        checksums matched, but see the end "
                            "marker above\n");
     }
 
-    if (f->unknown_typeflags) {
+    if (f->unknown_typeflags)
+    {
         (void)fprintf(out, "  unknown types    %llu member%s carry a typeflag this "
                            "does not recognize\n",
                       (unsigned long long)f->unknown_typeflags,
@@ -1664,9 +1840,11 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
 
     print_portability(out, a);
 
-    if (a->npax_global) {
+    if (a->npax_global)
+    {
         size_t g;
-        for (g = 0; g < a->npax_global; g++) {
+        for (g = 0; g < a->npax_global; g++)
+        {
             (void)fprintf(out, "  pax global       %s = %s\n",
                           a->pax_global[g].key, a->pax_global[g].value);
         }
@@ -1687,50 +1865,60 @@ static void text_summary(struct tmd_render *rd, const struct tmd_archive *a)
     (void)fprintf(out, "  format        %s\n", format_long_name(a->format));
 
     (void)fprintf(out, "  dialects      ");
-    for (i = TMD_FMT_V7; i <= TMD_FMT_PAX; i++) {
-        if (!a->formats[i]) {
+    for (i = TMD_FMT_V7; i <= TMD_FMT_PAX; i++)
+    {
+        if (!a->formats[i])
+        {
             continue;
         }
         (void)fprintf(out, "%s%s", first ? "" : ", ",
                       tmd_format_name((enum tmd_format)i));
         first = false;
     }
-    if (first) {
+    if (first)
+    {
         (void)fprintf(out, "none");
     }
     (void)fputc('\n', out);
 
-    if (a->writer) {
+    if (a->writer)
+    {
         (void)fprintf(out, "  written by    %s (inferred)\n", a->writer);
     }
 
     text_matched_line(rd, 14);
     (void)fprintf(out, "  members       %llu\n", (unsigned long long)a->entries);
-    if (a->counts[TMD_KIND_FILE]) {
+    if (a->counts[TMD_KIND_FILE])
+    {
         (void)fprintf(out, "                %llu file%s\n",
                       (unsigned long long)a->counts[TMD_KIND_FILE],
                       a->counts[TMD_KIND_FILE] == 1 ? "" : "s");
     }
-    if (a->counts[TMD_KIND_DIR]) {
+    if (a->counts[TMD_KIND_DIR])
+    {
         (void)fprintf(out, "                %llu director%s\n",
                       (unsigned long long)a->counts[TMD_KIND_DIR],
                       a->counts[TMD_KIND_DIR] == 1 ? "y" : "ies");
     }
-    if (a->counts[TMD_KIND_SYMLINK]) {
+    if (a->counts[TMD_KIND_SYMLINK])
+    {
         (void)fprintf(out, "                %llu symlink%s\n",
                       (unsigned long long)a->counts[TMD_KIND_SYMLINK],
                       a->counts[TMD_KIND_SYMLINK] == 1 ? "" : "s");
     }
-    if (a->counts[TMD_KIND_HARDLINK]) {
+    if (a->counts[TMD_KIND_HARDLINK])
+    {
         (void)fprintf(out, "                %llu hard link%s\n",
                       (unsigned long long)a->counts[TMD_KIND_HARDLINK],
                       a->counts[TMD_KIND_HARDLINK] == 1 ? "" : "s");
     }
-    if (devices) {
+    if (devices)
+    {
         (void)fprintf(out, "                %llu device node%s\n",
                       (unsigned long long)devices, devices == 1 ? "" : "s");
     }
-    if (a->counts[TMD_KIND_FIFO]) {
+    if (a->counts[TMD_KIND_FIFO])
+    {
         (void)fprintf(out, "                %llu FIFO%s\n",
                       (unsigned long long)a->counts[TMD_KIND_FIFO],
                       a->counts[TMD_KIND_FIFO] == 1 ? "" : "s");
@@ -1745,18 +1933,21 @@ static void text_summary(struct tmd_render *rd, const struct tmd_archive *a)
                                  stored, sizeof(stored)),
                   a->file_size ? "" : " read");
 
-    if (a->record_blocks) {
+    if (a->record_blocks)
+    {
         (void)fprintf(out, "  blocking      %u blocks (%u bytes), inferred\n",
                       a->record_blocks, a->record_blocks * TMD_BLOCK_SIZE);
     }
-    if (a->bad_checksums) {
+    if (a->bad_checksums)
+    {
         (void)fprintf(out, "  checksums     %llu header%s did not match\n",
                       (unsigned long long)a->bad_checksums,
                       a->bad_checksums == 1 ? "" : "s");
     }
     (void)fprintf(out, "  end marker    %s\n",
                   a->eof_marker ? "present" : "MISSING (archive is truncated)");
-    if (a->trailing_bytes) {
+    if (a->trailing_bytes)
+    {
         (void)fprintf(out, "  after marker  %llu bytes%s\n",
                       (unsigned long long)a->trailing_bytes,
                       a->trailing_garbage ? " — NOT all zero" : " of padding");
@@ -1765,9 +1956,11 @@ static void text_summary(struct tmd_render *rd, const struct tmd_archive *a)
     print_extraction(out, a, 14);
     print_order(out, a, 14);
 
-    if (a->npax_global) {
+    if (a->npax_global)
+    {
         size_t k;
-        for (k = 0; k < a->npax_global; k++) {
+        for (k = 0; k < a->npax_global; k++)
+        {
             (void)fprintf(out, "  pax global    %s = %s\n",
                           a->pax_global[k].key, a->pax_global[k].value);
         }
@@ -1783,12 +1976,14 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
     tmd_buf_addstr(&b, "  \"summary\": {");
     tmd_buf_addf(&b, "\"format\": \"%s\"", tmd_format_name(a->format));
     tmd_buf_addf(&b, ", \"format_name\": \"%s\"", format_long_name(a->format));
-    if (a->writer) {
+    if (a->writer)
+    {
         tmd_buf_addstr(&b, ", \"written_by\": ");
         tmd_json_escape(&b, a->writer);
     }
     tmd_buf_addf(&b, ", \"members\": %llu", (unsigned long long)a->entries);
-    if (rd->opt->nmatch > 0) {
+    if (rd->opt->nmatch > 0)
+    {
         tmd_buf_addf(&b, ", \"matched\": %llu", (unsigned long long)rd->matched);
     }
     tmd_buf_addf(&b, ", \"files\": %llu", (unsigned long long)a->counts[TMD_KIND_FILE]);
@@ -1803,7 +1998,8 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
                  tmd_human_size(a->total_size, human, sizeof(human)));
     tmd_buf_addf(&b, ", \"archive_bytes\": %llu",
                  (unsigned long long)(a->file_size ? a->file_size : a->total_stored));
-    if (a->record_blocks) {
+    if (a->record_blocks)
+    {
         tmd_buf_addf(&b, ", \"record_blocks\": %u", a->record_blocks);
     }
     tmd_buf_addf(&b, ", \"bad_checksums\": %llu",
@@ -1835,13 +2031,22 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
         tmd_buf_addf(&b, ", \"links_outside\": %llu}",
                      (unsigned long long)ef->escape_link);
 
+        if (a->codec)
+        {
+            tmd_buf_addstr(&b, ", \"compression\": ");
+            tmd_json_escape(&b, a->codec);
+        } else
+        {
+            tmd_buf_addstr(&b, ", \"compression\": null");
+        }
         tmd_buf_addf(&b, ", \"order\": {\"sorted\": %s",
                      ef->order_sorted ? "true" : "false");
         tmd_buf_addstr(&b, ", \"top_level\": [");
         {
             size_t k;
 
-            for (k = 0; k < ef->nroots; k++) {
+            for (k = 0; k < ef->nroots; k++)
+            {
                 tmd_buf_addstr(&b, k ? ", " : "");
                 tmd_json_escape(&b, ef->roots[k]);
             }
@@ -1850,7 +2055,8 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
                      ef->roots_truncated ? "true" : "false");
     }
 
-    if (rd->opt->info) {
+    if (rd->opt->info)
+    {
         const struct tmd_features *f = &a->features;
         size_t                     i;
 
@@ -1880,8 +2086,10 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
         tmd_buf_addf(&b, ", \"max_uid\": %lld", (long long)f->max_uid);
         tmd_buf_addf(&b, ", \"max_gid\": %lld", (long long)f->max_gid);
         tmd_buf_addstr(&b, ", \"pax_keys\": [");
-        for (i = 0; i < f->npax_keys; i++) {
-            if (i) {
+        for (i = 0; i < f->npax_keys; i++)
+        {
+            if (i)
+            {
                 tmd_buf_addstr(&b, ", ");
             }
             tmd_json_escape(&b, f->pax_keys[i]);
@@ -1889,7 +2097,8 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
         tmd_buf_addstr(&b, "]}");
     }
 
-    if (rd->opt->stats && rd->stat) {
+    if (rd->opt->stats && rd->stat)
+    {
         json_stat(rd, &b);
     }
 
@@ -1914,7 +2123,8 @@ struct tmd_render *tmd_render_new(FILE *out, const struct tmd_options *opt,
     /* More than one archive in JSON means a top-level array; one archive means
      * a bare object, so that `tmd -f x.tar --format=json | jq .summary` works
      * without the caller having to index into a single-element list. */
-    if (opt->output == TMD_OUT_JSON && archive_count > 1) {
+    if (opt->output == TMD_OUT_JSON && archive_count > 1)
+    {
         (void)fputs("[\n", out);
     }
     return rd;
@@ -1942,12 +2152,15 @@ static void span_string(int64_t seconds, char *buf, size_t bufsz)
     };
     size_t i;
 
-    if (seconds == 0) {
+    if (seconds == 0)
+    {
         (void)snprintf(buf, bufsz, "none — every member shares one second");
         return;
     }
-    for (i = 0; i < sizeof(scale) / sizeof(*scale); i++) {
-        if (seconds >= scale[i].unit) {
+    for (i = 0; i < sizeof(scale) / sizeof(*scale); i++)
+    {
+        if (seconds >= scale[i].unit)
+        {
             int64_t n = seconds / scale[i].unit;
 
             (void)snprintf(buf, bufsz, "%lld %s%s", (long long)n,
@@ -1964,8 +2177,10 @@ static const struct stat_time *stat_modal(const struct stats *s)
     const struct stat_time *best = NULL;
     size_t                  i;
 
-    for (i = 0; i < STAT_TIME_SLOTS; i++) {
-        if (s->times[i].used && (!best || s->times[i].count > best->count)) {
+    for (i = 0; i < STAT_TIME_SLOTS; i++)
+    {
+        if (s->times[i].used && (!best || s->times[i].count > best->count))
+        {
             best = &s->times[i];
         }
     }
@@ -1985,24 +2200,29 @@ static const char *stat_verdict(const struct stats *s)
 {
     int64_t span;
 
-    if (!s->have_time || s->members == 0) {
+    if (!s->have_time || s->members == 0)
+    {
         return NULL;
     }
     span = s->latest - s->earliest;
 
-    if (s->ndistinct == 1 && !s->distinct_overflow) {
-        if (s->zero_time) {
+    if (s->ndistinct == 1 && !s->distinct_overflow)
+    {
+        if (s->zero_time)
+        {
             return "every member is dated at the epoch — timestamps were "
                    "discarded, not preserved";
         }
         return "one timestamp for every member — normalized, as a reproducible "
                "build does with SOURCE_DATE_EPOCH";
     }
-    if (!s->distinct_overflow && s->ndistinct <= 8 && span <= 3600) {
+    if (!s->distinct_overflow && s->ndistinct <= 8 && span <= 3600)
+    {
         return "a handful of timestamps within an hour — exported into a fresh "
                "directory, then a few files regenerated";
     }
-    if (span >= INT64_C(86400) * 30) {
+    if (span >= INT64_C(86400) * 30)
+    {
         return "timestamps spread over months or more — real per-file times, "
                "preserved from a working tree";
     }
@@ -2030,7 +2250,8 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
     (void)fprintf(out, "  %-14s%llu bytes (%s)\n", "stored",
                   (unsigned long long)s->stored,
                   tmd_human_size(s->stored, human, sizeof(human)));
-    if (s->stored > 0) {
+    if (s->stored > 0)
+    {
         /* Integer arithmetic to a tenth of a percent: this is a report, and
          * pulling in floating point for one line of it is not worth it. */
         uint64_t tenths = (s->padding * 1000u) / s->stored;
@@ -2041,20 +2262,24 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
                       (unsigned long long)(tenths % 10));
     }
 
-    for (i = 0; i < s->ntop; i++) {
+    for (i = 0; i < s->ntop; i++)
+    {
         (void)fprintf(out, "  %-14s%10llu  %s\n", i == 0 ? "largest" : "",
                       (unsigned long long)s->top[i].size, s->top[i].path);
     }
 
     /* --- timestamps ------------------------------------------------------- */
-    if (!s->have_time) {
+    if (!s->have_time)
+    {
         (void)fprintf(out, "  %-14sno member carries one\n", "timestamps");
         return;
     }
-    if (s->distinct_overflow) {
+    if (s->distinct_overflow)
+    {
         (void)fprintf(out, "  %-14smore than %d distinct\n", "timestamps",
                       STAT_TIME_LIMIT);
-    } else {
+    } else
+    {
         (void)fprintf(out, "  %-14s%zu distinct\n", "timestamps", s->ndistinct);
     }
 
@@ -2073,7 +2298,8 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
     {
         const struct stat_time *modal = stat_modal(s);
 
-        if (modal && modal->count > 1) {
+        if (modal && modal->count > 1)
+        {
             struct tmd_time mt = { modal->sec, 0, true, NULL };
 
             format_time(&mt, rd->opt, stamp, sizeof(stamp));
@@ -2085,30 +2311,35 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
     }
 
     /* The ones that are invisible one-member-per-line. */
-    if (s->no_time) {
+    if (s->no_time)
+    {
         (void)fprintf(out, "  %-14s%llu member%s carry no mtime at all\n",
                       "missing", (unsigned long long)s->no_time,
                       s->no_time == 1 ? "" : "s");
     }
-    if (s->future_time) {
+    if (s->future_time)
+    {
         (void)fprintf(out, "  %-14s%llu member%s dated in the FUTURE\n",
                       "future", (unsigned long long)s->future_time,
                       s->future_time == 1 ? "" : "s");
     }
-    if (s->pre_tar_time) {
+    if (s->pre_tar_time)
+    {
         (void)fprintf(out, "  %-14s%llu member%s dated before tar existed "
                            "(earlier than 1979)\n", "implausible",
                       (unsigned long long)s->pre_tar_time,
                       s->pre_tar_time == 1 ? "" : "s");
     }
-    if (s->negative_time) {
+    if (s->negative_time)
+    {
         (void)fprintf(out, "  %-14s%llu member%s dated before 1970\n",
                       "negative", (unsigned long long)s->negative_time,
                       s->negative_time == 1 ? "" : "s");
     }
 
     verdict = stat_verdict(s);
-    if (verdict) {
+    if (verdict)
+    {
         (void)fprintf(out, "  %-14s%s\n", "produced by", verdict);
     }
 }
@@ -2126,7 +2357,8 @@ static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
     tmd_buf_addf(b, ", \"padding\": %llu", (unsigned long long)s->padding);
 
     tmd_buf_addstr(b, ", \"largest\": [");
-    for (i = 0; i < s->ntop; i++) {
+    for (i = 0; i < s->ntop; i++)
+    {
         tmd_buf_addf(b, "%s{\"size\": %llu, \"path\": ", i ? ", " : "",
                      (unsigned long long)s->top[i].size);
         tmd_json_escape(b, s->top[i].path);
@@ -2138,7 +2370,8 @@ static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
     tmd_buf_addf(b, "\"distinct\": %zu", s->ndistinct);
     tmd_buf_addf(b, ", \"distinct_capped\": %s",
                  s->distinct_overflow ? "true" : "false");
-    if (s->have_time) {
+    if (s->have_time)
+    {
         struct tmd_time first = { s->earliest, 0, true, NULL };
         struct tmd_time last = { s->latest, 0, true, NULL };
         char            stamp[64];
@@ -2152,7 +2385,8 @@ static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
         tmd_buf_addf(b, ", \"span_seconds\": %lld",
                      (long long)(s->latest - s->earliest));
     }
-    if (modal) {
+    if (modal)
+    {
         tmd_buf_addf(b, ", \"most_common_epoch\": %lld, \"most_common_count\": %llu",
                      (long long)modal->sec, (unsigned long long)modal->count);
     }
@@ -2167,7 +2401,8 @@ static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
     {
         const char *verdict = stat_verdict(s);
 
-        if (verdict) {
+        if (verdict)
+        {
             tmd_buf_addstr(b, ", \"produced_by\": ");
             tmd_json_escape(b, verdict);
         }
@@ -2182,16 +2417,19 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
     rd->matched = 0;
     rd->seen = 0;
 
-    if (rd->opt->stats) {
+    if (rd->opt->stats)
+    {
         stat_free(rd->stat);
         rd->stat = tmd_xcalloc(1, sizeof(*rd->stat));
     }
 
     struct tmd_buf b;
 
-    switch (rd->opt->output) {
+    switch (rd->opt->output)
+    {
     case TMD_OUT_JSON:
-        if (rd->archive_index > 0) {
+        if (rd->archive_index > 0)
+        {
             (void)fputs(",\n", rd->out);
         }
         tmd_buf_init(&b);
@@ -2215,7 +2453,8 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
         rd->entry_written = false;
         break;
     case TMD_OUT_CSV:
-        if (!rd->csv_header_written) {
+        if (!rd->csv_header_written)
+        {
             (void)fputs("path,kind,mode_string,mode,format,uid,gid,uname,gname,"
                         "size,stored_size,offset,mtime,mtime_epoch,linkpath,"
                         "checksum\n",
@@ -2227,7 +2466,8 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
         /* A banner only when there is more than one archive to tell apart.
          * With one, the listing is the whole output and a header would just be
          * something a pipeline has to strip. */
-        if (rd->archive_count > 1 && !rd->opt->summary_only && !rd->opt->info) {
+        if (rd->archive_count > 1 && !rd->opt->summary_only && !rd->opt->info)
+        {
             (void)fprintf(rd->out, "%s==> %s <==\n", rd->archive_index ? "\n" : "",
                           a->name);
         }
@@ -2241,11 +2481,14 @@ static bool entry_selected(const struct tmd_render *rd, const struct tmd_entry *
 {
     size_t i;
 
-    if (rd->opt->nmatch == 0) {
+    if (rd->opt->nmatch == 0)
+    {
         return true;
     }
-    for (i = 0; i < rd->opt->nmatch; i++) {
-        if (tmd_path_matches(e->path, rd->opt->match[i])) {
+    for (i = 0; i < rd->opt->nmatch; i++)
+    {
+        if (tmd_path_matches(e->path, rd->opt->match[i]))
+        {
             return true;
         }
     }
@@ -2256,7 +2499,8 @@ static void render_one(struct tmd_render *rd, const struct tmd_entry *e);
 
 static void hold_entry(struct tmd_render *rd, const struct tmd_entry *e)
 {
-    if (rd->nheld == rd->held_cap) {
+    if (rd->nheld == rd->held_cap)
+    {
         rd->held_cap = rd->held_cap ? rd->held_cap * 2 : 128;
         /*
          * `held` is an array OF POINTERS, so the element size is the size of a
@@ -2273,7 +2517,8 @@ static void hold_entry(struct tmd_render *rd, const struct tmd_entry *e)
     }
     rd->held[rd->nheld++] = tmd_entry_clone(e);
 
-    if (rd->nheld == TMD_SORT_LOUD_AT && !rd->warned_large && !rd->opt->quiet) {
+    if (rd->nheld == TMD_SORT_LOUD_AT && !rd->warned_large && !rd->opt->quiet)
+    {
         (void)fprintf(stderr,
                       "tmd: --sort is holding %d members in memory; "
                       "a listing cannot be ordered until it has been read "
@@ -2285,7 +2530,8 @@ static void hold_entry(struct tmd_render *rd, const struct tmd_entry *e)
 void tmd_render_entry(struct tmd_render *rd, const struct tmd_entry *e)
 {
     rd->seen++;
-    if (!entry_selected(rd, e)) {
+    if (!entry_selected(rd, e))
+    {
         return;
     }
     rd->matched++;
@@ -2298,14 +2544,17 @@ void tmd_render_entry(struct tmd_render *rd, const struct tmd_entry *e)
      * is this file", which a filter cannot change; a distribution answers "what
      * is in this set", which is exactly what a filter selects.
      */
-    if (rd->stat) {
+    if (rd->stat)
+    {
         stat_note(rd->stat, e);
     }
 
-    if (rd->opt->summary_only || rd->opt->info || rd->opt->stats) {
+    if (rd->opt->summary_only || rd->opt->info || rd->opt->stats)
+    {
         return;
     }
-    if (rd->opt->sort != TMD_SORT_NONE) {
+    if (rd->opt->sort != TMD_SORT_NONE)
+    {
         hold_entry(rd, e);
         return;
     }
@@ -2314,9 +2563,11 @@ void tmd_render_entry(struct tmd_render *rd, const struct tmd_entry *e)
 
 static void render_one(struct tmd_render *rd, const struct tmd_entry *e)
 {
-    switch (rd->opt->output) {
+    switch (rd->opt->output)
+    {
     case TMD_OUT_JSON:
-        if (rd->entry_written) {
+        if (rd->entry_written)
+        {
             (void)fputs(",\n", rd->out);
         }
         json_entry(rd, e);
@@ -2326,9 +2577,11 @@ static void render_one(struct tmd_render *rd, const struct tmd_entry *e)
         csv_entry(rd, e);
         break;
     case TMD_OUT_TEXT:
-        if (rd->opt->long_form || rd->opt->headers) {
+        if (rd->opt->long_form || rd->opt->headers)
+        {
             text_long_entry(rd, e);
-        } else {
+        } else
+        {
             char *line = tmd_render_listing_line(e, rd->opt);
             (void)fprintf(rd->out, "%s\n", line);
             free(line);
@@ -2347,10 +2600,12 @@ static void render_one(struct tmd_render *rd, const struct tmd_entry *e)
  */
 static int cmp_u64(uint64_t x, uint64_t y)
 {
-    if (x < y) {
+    if (x < y)
+    {
         return -1;
     }
-    if (x > y) {
+    if (x > y)
+    {
         return 1;
     }
     return 0;
@@ -2363,7 +2618,8 @@ static int compare_held(const void *pa, const void *pb)
     const struct tmd_options *opt = compare_options;
     int                       r = 0;
 
-    switch (opt->sort) {
+    switch (opt->sort)
+    {
     case TMD_SORT_PATH:
         r = strcmp(a->path ? a->path : "", b->path ? b->path : "");
         break;
@@ -2374,11 +2630,14 @@ static int compare_held(const void *pa, const void *pb)
         /* A member with no mtime at all sorts before every member that has
          * one, rather than being treated as the epoch -- "absent" and "1970"
          * are different findings about an archive. */
-        if (a->mtime.present != b->mtime.present) {
+        if (a->mtime.present != b->mtime.present)
+        {
             r = a->mtime.present ? 1 : -1;
-        } else if (a->mtime.sec != b->mtime.sec) {
+        } else if (a->mtime.sec != b->mtime.sec)
+        {
             r = a->mtime.sec < b->mtime.sec ? -1 : 1;
-        } else {
+        } else
+        {
             r = cmp_u64(a->mtime.nsec, b->mtime.nsec);
         }
         break;
@@ -2386,7 +2645,8 @@ static int compare_held(const void *pa, const void *pb)
     case TMD_SORT_NONE:
         break;
     }
-    if (r == 0) {
+    if (r == 0)
+    {
         r = cmp_u64(a->offset, b->offset);
         /*
          * Under --sort=offset the offset IS the key, so --reverse applies to
@@ -2394,7 +2654,8 @@ static int compare_held(const void *pa, const void *pb)
          * inverted: two members of the same size should stay in the archive's
          * own order whichever direction the sizes run.
          */
-        if (opt->reverse && opt->sort == TMD_SORT_OFFSET) {
+        if (opt->reverse && opt->sort == TMD_SORT_OFFSET)
+        {
             return -r;
         }
         return r;
@@ -2406,14 +2667,16 @@ static void flush_held(struct tmd_render *rd)
 {
     size_t i;
 
-    if (rd->nheld > 0) {
+    if (rd->nheld > 0)
+    {
         compare_options = rd->opt;
         /* The element is a pointer; see hold_entry above. */
         /* NOLINTNEXTLINE(bugprone-sizeof-expression) */
         qsort(rd->held, rd->nheld, sizeof(*rd->held), compare_held);
         compare_options = NULL;
     }
-    for (i = 0; i < rd->nheld; i++) {
+    for (i = 0; i < rd->nheld; i++)
+    {
         render_one(rd, rd->held[i]);
         tmd_entry_free(rd->held[i]);
     }
@@ -2429,7 +2692,8 @@ void tmd_render_archive_end(struct tmd_render *rd, const struct tmd_archive *a)
      * streamed lines would have been. */
     flush_held(rd);
 
-    switch (rd->opt->output) {
+    switch (rd->opt->output)
+    {
     case TMD_OUT_JSON:
         (void)fputs(rd->entry_written ? "\n  ],\n" : "  ],\n", rd->out);
         json_summary(rd, a);
@@ -2438,12 +2702,15 @@ void tmd_render_archive_end(struct tmd_render *rd, const struct tmd_archive *a)
     case TMD_OUT_CSV:
         break;
     case TMD_OUT_TEXT:
-        if (rd->opt->stats) {
+        if (rd->opt->stats)
+        {
             text_stat(rd, a);
         }
-        if (rd->opt->info) {
+        if (rd->opt->info)
+        {
             text_info(rd, a);
-        } else if (rd->opt->summary_only || rd->opt->with_summary) {
+        } else if (rd->opt->summary_only || rd->opt->with_summary)
+        {
             text_summary(rd, a);
         }
         break;
@@ -2452,10 +2719,13 @@ void tmd_render_archive_end(struct tmd_render *rd, const struct tmd_archive *a)
 
 void tmd_render_finish(struct tmd_render *rd)
 {
-    if (rd->opt->output == TMD_OUT_JSON) {
-        if (rd->archive_count > 1) {
+    if (rd->opt->output == TMD_OUT_JSON)
+    {
+        if (rd->archive_count > 1)
+        {
             (void)fputs("\n]\n", rd->out);
-        } else {
+        } else
+        {
             (void)fputc('\n', rd->out);
         }
     }

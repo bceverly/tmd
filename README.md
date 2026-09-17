@@ -11,7 +11,7 @@ anything.**
 
 [![License: BSD 2-Clause](https://img.shields.io/badge/license-BSD--2--Clause-1B4B8F.svg)](LICENSE)
 [![Language: C11](https://img.shields.io/badge/language-C11-0A2240.svg)](https://en.wikipedia.org/wiki/C11_(C_standard_revision))
-[![Dependencies: libc only](https://img.shields.io/badge/dependencies-libc%20only-1e7a46.svg)](#why-it-has-no-dependencies)
+[![Links: libc only](https://img.shields.io/badge/links-libc%20only-1e7a46.svg)](#what-it-links-and-what-it-runs)
 [![Ubuntu: 22.04 · 24.04 · 26.04](https://img.shields.io/badge/ubuntu-22.04%20%C2%B7%2024.04%20%C2%B7%2026.04-E95420.svg)](#installing)
 
 [![cppcheck](https://img.shields.io/badge/cppcheck-clean-1e7a46.svg)](#security)
@@ -733,6 +733,48 @@ of strings to an array of `{code, text}`.
 | **GNU** | GNU tar | `L` and `K` blocks for unlimited paths and link targets, `S` sparse files with the in-header map *and* its continuation blocks, `D` dumpdirs, `M` multi-volume parts, `V` volume labels, base-256 numeric fields, and atime/ctime read from the header tail rather than mistaken for a path prefix. |
 | **pax** (POSIX.1-2001) | bsdtar, GNU tar `--format=posix` | `x` and `g` extended headers with correct length-prefixed record parsing, `path`/`linkpath`/`size`/`uid`/`gid`/`uname`/`gname`/`mtime`/`atime` overrides, nanosecond timestamps, and GNU sparse formats 0.0, 0.1 and 1.0 — including the 1.0 map that lives in the member's own payload. |
 
+### Compressed archives
+
+Read directly. A `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst` and several more
+are recognized **by content, not by extension**, and unpacked on the way in:
+
+```console
+$ tmd -f nginx-1.31.6.tar.gz -i | grep compression
+  compression      gzip
+$ cat backup.tar.zst | tmd          # through a pipe, where nothing can be rewound
+```
+
+| magic | format | tool run |
+|---|---|---|
+| `1f 8b` | gzip | `gzip -dc` |
+| `fd 37 7a 58 5a 00` | xz | `xz -dc` |
+| `42 5a 68` | bzip2 | `bzip2 -dc` |
+| `28 b5 2f fd` | zstd | `zstd -dc` |
+| `04 22 4d 18` | lz4 | `lz4 -dc` |
+| `LZIP` | lzip | `lzip -dc` |
+| `1f 9d` | compress | `gzip -dc` |
+
+tmd **runs** those tools rather than linking a compression library — see
+[What it links, and what it runs](#what-it-links-and-what-it-runs). Three
+processes are involved: a feeder, the decompressor, and tmd. The feeder exists
+because tmd has already read the first bytes to find out what the file *is*, and
+those bytes have to reach the decompressor too; a seekable file could be rewound
+instead, but standard input cannot, and one path that always works beats two
+that each work sometimes.
+
+Two things it will not do quietly:
+
+- **A missing tool is named.** Not an empty archive, not a parse error:
+  `tmd: a.tgz: gzip-compressed, and gzip is not installed`.
+- **A truncated stream is an error.** A corrupt `.tar.gz` decompresses part way
+  and stops, and what reaches the reader is a perfectly well-formed *prefix* of
+  an archive. Reporting that as a complete listing with exit 0 would be a silent
+  wrong answer, so tmd checks the decompressor's exit status and fails.
+
+A container that is not a compressed tar — a zip, an RPM, a cpio archive — is
+named for what it is rather than guessed at, because no amount of piping turns
+one into a tar archive.
+
 The format is worked out **per member**, not per archive, because a real archive
 mixes them: a pax archive is plain ustar headers with an occasional extended
 header in front of the member that needed one. The summary reports the most
@@ -828,13 +870,34 @@ copy on every edit.
 
 See `scripts/version.sh`, which is the whole of this in forty lines.
 
-### Why it has no dependencies
+### What it links, and what it runs
 
-`ldd bin/tmd` reports libc and nothing else. That is a design decision, not an
-accident: this program parses files that arrive from other people, and every
-library linked into it is more attacker-reachable code and another CVE feed to
-watch. It also means a Launchpad builder — which has no network — can build the
-package from the source alone, with no vendoring.
+Two different questions, and tmd answers them differently.
+
+**It links nothing but libc.** `ldd bin/tmd` reports the C runtime and nothing
+else, and `make security` checks that rather than asserting it — anything beyond
+libc fails the build. That is a design decision, not an accident: this program
+parses files that arrive from other people, and every library linked into it is
+more attacker-reachable code and another CVE feed to watch. It also means a
+Launchpad builder — which has no network — can build the package from source
+alone, with no vendoring.
+
+**It runs the system's decompressor.** Since v1.5.0.0 tmd reads `.tar.gz`,
+`.tar.xz`, `.tar.bz2`, `.tar.zst` and several more directly, by executing
+`gzip -dc`, `xz -dc` and friends as separate processes — the same thing GNU tar
+does when you pass it `-z`. So those tools are **runtime** dependencies, and the
+Debian package declares them: `xz-utils` as a `Depends`, `bzip2` and `zstd` as
+`Recommends`, `lz4` and `lzip` as `Suggests`. `gzip` is deliberately absent
+because it is `Essential` on every Debian system, and depending on an essential
+package is a Policy violation.
+
+Running them rather than linking them is the better trade for this program, not
+merely the easier one: the code that parses hostile *compressed* bytes then sits
+in a different process from the code that parses hostile *tar* headers, and a
+bug in zlib is a bug in something tmd talks to rather than a bug in tmd's
+address space. Without any of those tools installed tmd still works perfectly on
+uncompressed archives, and says plainly which tool is missing when it meets one
+it cannot open.
 
 ## Testing
 
@@ -852,7 +915,16 @@ are the ones no real tool would ever write: a truncated sparse map, a pax record
 whose length prefix lies, a checksum field full of spaces, a directory that
 claims a 4096-byte payload. There is no external framework — a test runner that
 needs a package installed before `make test` works would undo the point of a C
-program with no dependencies.
+program that links nothing.
+
+**Architectures.** Every job runs on x86-64, where three things are true that
+are not true everywhere: the machine is little-endian, `time_t` is 64 bits, and
+plain `char` is signed. tmd is written not to care — every header field is
+decoded byte by byte, so there is not a single multi-byte load in the program —
+and since v1.5.0.0 a `Tests (aarch64)` job on GitHub's native arm runners proves
+part of it: `char` is unsigned there, and the ABI is different. It is still
+little-endian, so a genuine byte-order bug would survive it; a qemu-based
+big-endian leg would catch one and is on the [roadmap](ROADMAP.md).
 
 **End-to-end tests** do the opposite: they build archives with the real `tar`
 and `bsdtar`, in every format each can write, and check that `tmd`'s listing
@@ -977,6 +1049,38 @@ The split is deliberate. Lint takes seconds and belongs at the save point;
 the full test run takes minutes, and interrupting every commit for it is how
 people learn to pass `--no-verify`, which switches off the push check too.
 `TMD_SKIP_HOOK=1` bypasses either.
+
+### Brace style, and why lint checks it
+
+Two rules, both enforced by `make lint` rather than left to good intentions.
+
+**Every body is braced**, even a single statement:
+
+```c
+if (!path)
+{
+    return false;
+}
+```
+
+Not a matter of taste. An unbraced body is one careless edit away from a second
+statement that looks guarded and is not, which is exactly CVE-2014-1266 —
+Apple's "goto fail", a duplicated `goto fail;` under an unbraced `if` that
+skipped the rest of a TLS signature check and shipped. clang-tidy's
+`readability-braces-around-statements` is enabled by name for this.
+
+**The opening brace of a statement goes on its own line.** A house rule, adopted
+because the attached form is harder to read, and checked by lint's `brace style`
+section — which reports file and line, so a slip is caught rather than merged.
+
+It is deliberately narrow: this is about *statements*. A `struct`, `union` or
+`enum` body and an initializer keep their brace attached, because those declare
+a shape rather than open a block, and moving theirs would make a table of
+constants twice as tall for no gain.
+
+The check is awk rather than clang-format, because clang-format cannot be asked
+for one rule — it reformats everything, and the alignment and comment wrapping
+in these files were done by hand and are meant to stay.
 
 ### The copyright audit
 

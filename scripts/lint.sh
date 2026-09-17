@@ -203,6 +203,55 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "brace style"
+#
+# The opening brace of a control statement goes on its own line.
+#
+#     if (x)          not     if (x) {
+#     {
+#
+# A house rule, adopted because the maintainer finds the attached form harder
+# to read, and enforced here because a style nobody checks is a style that half
+# the file follows. It is deliberately narrow: this is about STATEMENTS. A
+# struct, union or enum body and an initializer keep their brace where it is,
+# because those are declarations of shape rather than blocks of code, and moving
+# theirs would make a table of constants twice as tall for no gain.
+#
+# Written in awk rather than clang-format because clang-format cannot be asked
+# for one rule: it reformats everything, and this file is full of alignment and
+# comment wrapping that was done by hand and is meant to stay.
+BRACE_HITS="$(awk '
+  # Track block comments so a brace inside prose is not mistaken for code.
+  {
+    line = $0
+    if (in_comment) {
+      if (match(line, /\*\//)) { line = substr(line, RSTART + 2); in_comment = 0 }
+      else { next }
+    }
+    # Drop trailing line comments and any complete block comment.
+    gsub(/\/\*[^*]*\*+([^\/*][^*]*\*+)*\//, "", line)
+    if (match(line, /\/\*/)) { line = substr(line, 1, RSTART - 1); in_comment = 1 }
+    sub(/\/\/.*/, "", line)
+    sub(/[ \t]+$/, "", line)
+
+    if (line !~ /\{$/) next
+    body = line
+    sub(/^[ \t]+/, "", body)
+    if (body == "{") next                                  # already alone
+    if (body ~ /^(static[ \t]+|const[ \t]+)*(struct|union|enum|typedef)\y/) next
+    if (body ~ /=[ \t]*\{$/) next                          # an initializer
+    printf "%s:%d: %s\n", FILENAME, FNR, body
+  }
+' src/*.c src/*.h include/*.h tests/*.c tests/*.h tests/fuzz/*.c || true)"
+
+if [ -z "$BRACE_HITS" ]; then
+  ok "every control statement puts its opening brace on its own line"
+else
+  bad "$(printf '%s\n' "$BRACE_HITS" | wc -l) opening brace(s) share a line with a statement"
+  printf '%s\n' "$BRACE_HITS" | head -10 | sed 's/^/      /'
+fi
+
+# ---------------------------------------------------------------------------
 section "copyright audit"
 #
 # Every source file carries the same notice, and this is what keeps that true.

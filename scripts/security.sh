@@ -297,10 +297,29 @@ fi
 section "dependencies"
 # Said out loud rather than left as an absent section: a CVE in a dependency is
 # the most common way a small tool becomes vulnerable, and the reason there is
-# nothing to scan here is a design decision worth restating.
+# so little to scan here is a design decision worth restating.
+#
+# The claim is about LINKING, and it is checked rather than asserted: ldd is
+# asked, and anything beyond the C runtime fails this. That distinction started
+# mattering when tmd learned to read compressed archives -- it does that by
+# running the system's decompressor as a separate process, the way GNU tar runs
+# gzip, so a bug in zlib is a bug in a program tmd talks to rather than a bug in
+# tmd's address space. Worth naming both halves rather than letting "no
+# dependencies" quietly cover two different things.
 DEPS="$(ldd bin/tmd 2>/dev/null | grep -cE 'lib[a-z]' || true)"
-ok "no third-party code is vendored or linked; the binary needs only libc"
-note "ldd reports ${DEPS:-?} shared objects, all from the C runtime"
+NONLIBC="$(ldd bin/tmd 2>/dev/null \
+           | grep -oE '/[^ ]*lib[a-z0-9_.+-]+\.so[^ ]*' \
+           | grep -vE '/(libc|libm|libdl|libpthread|librt|ld-linux)[.-]' \
+           || true)"
+if [ -n "$NONLIBC" ]; then
+  bad "the binary links something beyond the C runtime"
+  printf '%s\n' "$NONLIBC" | sed 's/^/      /'
+else
+  ok "nothing is vendored, and nothing beyond libc is linked"
+  note "ldd reports ${DEPS:-?} shared objects, all from the C runtime"
+  note "compressed archives run the system's decompressor as a separate"
+  note "process, so its code never enters this address space"
+fi
 
 # ---------------------------------------------------------------------------
 printf '\n'

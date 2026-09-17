@@ -428,6 +428,15 @@ struct tmd_archive {
 
     struct tmd_warning *warnings;
     size_t              nwarnings;
+    /*
+     * The decompressor the bytes came through, or NULL for a plain tar file.
+     *
+     * Worth reporting: "562 members" means something different about a 40MB
+     * .tar.gz than about a 40MB .tar, and a reader who did not notice the
+     * extension should not have to.
+     */
+    const char *codec;
+
 };
 
 enum tmd_output {

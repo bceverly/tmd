@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include "test.h"
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,9 +81,11 @@ static void test_file_source(void)
     CHECK(fd >= 0);
     f = fdopen(fd, "wb");
     CHECK(f != NULL);
-    if (f) {
+    if (f)
+    {
         size_t i;
-        for (i = 0; i < 100; i++) {
+        for (i = 0; i < 100; i++)
+        {
             (void)fputc((int)('a' + (i % 26)), f);
         }
         (void)fclose(f);
@@ -89,7 +93,8 @@ static void test_file_source(void)
 
     s = tmd_source_open(path, &err);
     CHECK(s != NULL);
-    if (s) {
+    if (s)
+    {
         char buf[32];
 
         CHECK_INT(tmd_source_size(s), 100);
@@ -107,8 +112,247 @@ static void test_file_source(void)
     (void)remove(path);
 }
 
+/*
+ * A gzip stream of "hello, decompressed world\n", 46 bytes.
+ *
+ * Embedded rather than produced by running gzip, so that creating the fixture
+ * depends on nothing. Reading it still needs the gzip program, which is what
+ * tmd runs -- the tests below skip when it is absent rather than fail.
+ */
+static const unsigned char GZ_HELLO[] = {
+    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xcb, 0x48,
+    0xcd, 0xc9, 0xc9, 0xd7, 0x51, 0x48, 0x49, 0x4d, 0xce, 0xcf, 0x2d, 0x28,
+    0x4a, 0x2d, 0x2e, 0x4e, 0x4d, 0x51, 0x28, 0xcf, 0x2f, 0xca, 0x49, 0xe1,
+    0x02, 0x00, 0xd2, 0xdc, 0xeb, 0x17, 0x1a, 0x00, 0x00, 0x00,
+};
+#define GZ_PLAIN "hello, decompressed world\n"
+
+static bool have_gzip(void)
+{
+    /* Asked the same way tmd asks: by whether execvp would find it. */
+    return system("command -v gzip > /dev/null 2>&1") == 0;
+}
+
+static char *write_temp(const void *data, size_t len)
+{
+    char  path[] = "/tmp/tmd-src-XXXXXX";
+    int   fd = mkstemp(path);
+    FILE *f;
+
+    if (fd < 0)
+    {
+        return NULL;
+    }
+    f = fdopen(fd, "wb");
+    if (!f)
+    {
+        (void)close(fd);
+        return NULL;
+    }
+    (void)fwrite(data, 1, len, f);
+    (void)fclose(f);
+    return tmd_xstrdup(path);
+}
+
+static void test_compressed_source(void)
+{
+    char *path;
+    char *err = NULL;
+
+    if (!have_gzip())
+    {
+        return; /* nothing to decompress with */
+    }
+
+    path = write_temp(GZ_HELLO, sizeof(GZ_HELLO));
+    CHECK(path != NULL);
+    if (!path)
+    {
+        return;
+    }
+
+    TEST_CASE("a gzip file is decompressed on the way in");
+    {
+        struct tmd_source *s = tmd_source_open(path, &err);
+
+        CHECK(s != NULL);
+        if (s)
+        {
+            char buf[64];
+            size_t n = tmd_source_read(s, buf, sizeof(buf));
+
+            CHECK_INT(n, (int)strlen(GZ_PLAIN));
+            CHECK(memcmp(buf, GZ_PLAIN, strlen(GZ_PLAIN)) == 0);
+            CHECK_STR(tmd_source_codec(s), "gzip");
+            /* A stream that ended normally did not fail. */
+            CHECK(!tmd_source_codec_failed(s));
+            tmd_source_close(s);
+        }
+    }
+
+    /*
+     * Closing before the stream ends is the case the close path is written for:
+     * the decompressor is still running, and closing our end is what stops it.
+     * Waiting on it first would hang here.
+     */
+    TEST_CASE("closing early does not hang");
+    {
+        struct tmd_source *s = tmd_source_open(path, &err);
+
+        CHECK(s != NULL);
+        if (s)
+        {
+            char buf[4];
+
+            (void)tmd_source_read(s, buf, sizeof(buf));
+            tmd_source_close(s);
+        }
+    }
+
+    /*
+     * The decompressor missing has to be reported as the decompressor missing.
+     * Without the check for it, execvp failing looks exactly like an empty
+     * file, and a perfectly good archive is reported as "not a tar archive".
+     *
+     * Produced by emptying PATH, which has one consequence worth naming: under
+     * valgrind the child is itself run by valgrind, and valgrind needs PATH to
+     * start it, so the open does NOT fail the way it does normally. The case is
+     * therefore asserted only when the environment actually produced it, and
+     * whatever comes back is closed either way -- the first version of this
+     * asserted unconditionally and leaked the source it did not expect, which
+     * is how the difference was found.
+     */
+    TEST_CASE("a decompressor that cannot be found is named");
+    {
+        char              *saved = getenv("PATH")
+                                       ? tmd_xstrdup(getenv("PATH")) : NULL;
+        struct tmd_source *s;
+
+        (void)setenv("PATH", "/nonexistent-for-this-test", 1);
+        err = NULL;
+        s = tmd_source_open(path, &err);
+        if (s)
+        {
+            /* The environment would not produce the failure; nothing to assert
+             * beyond leaving it as we found it. */
+            tmd_source_close(s);
+        }
+        else
+        {
+            CHECK(err != NULL);
+            if (err)
+            {
+                CHECK_CONTAINS(err, "gzip");
+                CHECK_CONTAINS(err, "not installed");
+            }
+
+            /*
+             * The same failure, with a caller that does not want the message.
+             * The message is still built internally, so this is where it would
+             * be leaked -- which the leak checkers only notice if something
+             * asks.
+             */
+            s = tmd_source_open(path, NULL);
+            CHECK(s == NULL);
+            if (s)
+            {
+                tmd_source_close(s);
+            }
+        }
+        free(err);
+        err = NULL;
+
+        if (saved)
+        {
+            (void)setenv("PATH", saved, 1);
+            free(saved);
+        }
+        else
+        {
+            (void)unsetenv("PATH");
+        }
+    }
+
+    (void)remove(path);
+    free(path);
+}
+
+/*
+ * Truncated compressed data: the decompressor gives up part way, and what came
+ * out is a prefix. Saying so is the difference between a report and a guess.
+ */
+static void test_truncated_compressed_source(void)
+{
+    char *path;
+    char *err = NULL;
+
+    if (!have_gzip())
+    {
+        return;
+    }
+    /* Half a gzip stream: enough of a header to start, not enough to finish. */
+    path = write_temp(GZ_HELLO, sizeof(GZ_HELLO) / 2);
+    CHECK(path != NULL);
+    if (!path)
+    {
+        return;
+    }
+
+    TEST_CASE("a truncated stream is reported as a failed decompression");
+    {
+        struct tmd_source *s;
+        /*
+         * gzip says "unexpected end of file" on its own stderr, which is
+         * exactly right for a user and only noise in a test log. Silenced for
+         * the length of this case and put back afterwards.
+         */
+        int saved_err = dup(STDERR_FILENO);
+        int devnull = open("/dev/null", O_WRONLY);
+
+        if (devnull >= 0)
+        {
+            (void)dup2(devnull, STDERR_FILENO);
+        }
+
+        s = tmd_source_open(path, &err);
+
+        if (s)
+        {
+            char buf[64];
+
+            /* Read to the end, which is where the exit status becomes known. */
+            while (tmd_source_read(s, buf, sizeof(buf)) > 0)
+            {
+                /* draining; the point is to reach the end */
+            }
+            CHECK(tmd_source_codec_failed(s));
+            tmd_source_close(s);
+        }
+        else
+        {
+            /* gzip can also fail before producing a byte, which open reports. */
+            CHECK(err != NULL);
+            free(err);
+        }
+
+        if (saved_err >= 0)
+        {
+            (void)dup2(saved_err, STDERR_FILENO);
+            (void)close(saved_err);
+        }
+        if (devnull >= 0)
+        {
+            (void)close(devnull);
+        }
+    }
+    (void)remove(path);
+    free(path);
+}
+
 void test_source(void)
 {
     test_memory_source();
+    test_compressed_source();
+    test_truncated_compressed_source();
     test_file_source();
 }

@@ -307,6 +307,11 @@ jobs:
           # explicitly rather than assumed to be in the base image, because a
           # check that silently vanishes is worse than one that fails.
           # Deliberately NOT a compiler: the package must not need one to run.
+          #
+          # Deliberately NOT xz-utils either: the package Depends on it, so
+          # installing the .deb below has to pull it in. Installing it here
+          # would hide a missing dependency, which is most of what this job is
+          # for.
           apt-get install -y -qq --no-install-recommends tar gzip man-db
 
           # Make the container behave like a real Ubuntu system before
@@ -329,7 +334,26 @@ jobs:
           # PACKAGE, not Docker's space-saving policy.
           rm -f /etc/dpkg/dpkg.cfg.d/excludes
 
-          dpkg -i /packages/tmd_*_amd64.deb
+          # Prove the package's dependencies are real before installing it:
+          # xz-utils is a Depends and is NOT in this image, so if the install
+          # below does not pull it in, the declaration is decoration.
+          if command -v xz > /dev/null 2>&1; then
+            echo "::error::xz is already present; this check proves nothing"
+            exit 1
+          fi
+
+          # apt-get, not dpkg -i.
+          #
+          # dpkg does not resolve dependencies -- it unpacks, finds xz-utils
+          # missing, and exits 1 leaving the package unconfigured. That is
+          # correct dpkg behavior and exactly what a user hits, which is why
+          # the install has to go through apt: it is what `apt install ./x.deb`
+          # and what installing from the PPA both do.
+          apt-get install -y -qq /packages/tmd_*_amd64.deb
+
+          # The dependency arrived, and so did the Recommends.
+          command -v xz
+          dpkg-query -W -f='${Status}' tmd | grep -q "install ok installed"
 
           # Everything the package put on disk, printed unconditionally so that
           # a failure below can be diagnosed from this log alone instead of
@@ -404,6 +428,21 @@ jobs:
           gzip -c /tmp/check.tar > /tmp/check.tar.gz
           gzip -dc /tmp/check.tar.gz | tmd > /tmp/pipe.txt
           diff /tmp/report.txt /tmp/pipe.txt
+
+          # Compressed archives, which is the thing the package declares
+          # dependencies for. xz came from the .deb's Depends, checked above.
+          tar -cJf /tmp/check.tar.xz -C /tmp tree
+          tmd -f /tmp/check.tar.xz > /tmp/xz.txt
+          diff /tmp/report.txt /tmp/xz.txt
+          tmd -f /tmp/check.tar.xz -i | grep -q "compression"
+
+          # gzip is Essential, so it is present without being depended on.
+          gzip -c /tmp/check.tar > /tmp/check.tar.gz
+          tmd -f /tmp/check.tar.gz > /tmp/gz.txt
+          diff /tmp/report.txt /tmp/gz.txt
+          # ...and the same through a pipe, where nothing can be rewound.
+          cat /tmp/check.tar.gz | tmd > /tmp/gzpipe.txt
+          diff /tmp/report.txt /tmp/gzpipe.txt
 
           # A missing archive fails with the documented status.
           tmd -f /nonexistent.tar && exit 1 || test $? -eq 1

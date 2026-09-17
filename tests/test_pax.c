@@ -22,7 +22,8 @@ static const struct tmd_entry *first_entry(const struct tarbuild *tb,
 
     *src = tmd_source_open_memory(tb->buf.data, tb->buf.len, "(test)");
     *reader = tmd_reader_new(*src);
-    if (tmd_reader_next(*reader, &e) != 1) {
+    if (tmd_reader_next(*reader, &e) != 1)
+    {
         return NULL;
     }
     return e;
@@ -38,8 +39,10 @@ static const char *pax_value(const struct tmd_entry *e, const char *key)
 {
     size_t i;
 
-    for (i = 0; i < e->npax; i++) {
-        if (strcmp(e->pax[i].key, key) == 0) {
+    for (i = 0; i < e->npax; i++)
+    {
+        if (strcmp(e->pax[i].key, key) == 0)
+        {
             return e->pax[i].value;
         }
     }
@@ -69,7 +72,8 @@ static void test_pax_overrides(void)
 
     e = first_entry(&tb, &src, &reader);
     CHECK(e != NULL);
-    if (e) {
+    if (e)
+    {
         CHECK_STR(e->path, "a/path/far/longer/than/the/header/could/ever/hold/file.txt");
         CHECK_STR(e->path_source, "pax path");
         CHECK_INT(e->uid, 4294967296LL);
@@ -101,7 +105,8 @@ static void test_pax_fractions(void)
         tb_end(&tb);
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e) {
+        if (e)
+        {
             CHECK_INT(e->mtime.nsec, 500000000);
         }
         done(src, reader);
@@ -117,7 +122,8 @@ static void test_pax_fractions(void)
         tb_end(&tb);
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e) {
+        if (e)
+        {
             CHECK_INT(e->mtime.nsec, 123456789);
         }
         done(src, reader);
@@ -133,7 +139,8 @@ static void test_pax_fractions(void)
         tb_end(&tb);
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e) {
+        if (e)
+        {
             CHECK_INT(e->mtime.sec, -86400);
         }
         done(src, reader);
@@ -163,7 +170,8 @@ static void test_pax_values_with_newlines(void)
 
     e = first_entry(&tb, &src, &reader);
     CHECK(e != NULL);
-    if (e) {
+    if (e)
+    {
         CHECK_STR(e->path, "after.txt");
         CHECK_STR(pax_value(e, "comment"), "first line\nsecond line");
     }
@@ -312,7 +320,8 @@ static void test_pax_sparse(void)
 
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e) {
+        if (e)
+        {
             CHECK(e->is_sparse);
             /* The header name is a placeholder; the real one is in the pax. */
             CHECK_STR(e->path, "real/sparse.img");
@@ -361,7 +370,8 @@ static void test_pax_sparse(void)
         CHECK(e->is_sparse);
         CHECK_STR(e->path, "big.img");
         CHECK_INT(e->nsparse, 2);
-        if (e->nsparse == 2) {
+        if (e->nsparse == 2)
+        {
             CHECK_INT(e->sparse[0].offset, 0);
             CHECK_INT(e->sparse[0].numbytes, 1024);
             CHECK_INT(e->sparse[1].offset, 2096128);

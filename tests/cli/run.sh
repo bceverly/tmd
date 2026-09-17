@@ -288,6 +288,96 @@ offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sor
 check "each copy reports a different offset" "$offsets" "2"
 
 # ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ compressed archives\033[0m\n'
+
+# Read directly, by running the system's decompressor. Each format is skipped
+# rather than failed when its tool is not installed: tmd's behavior there is a
+# clear message, which is checked separately below.
+# The control is an UNCOMPRESSED archive of the same tree, written by the same
+# tar. Comparing against the gnu.tar fixture instead compared two different sets
+# of members, which is what the first version of this did.
+tar -cf plainctl.tar tree 2>/dev/null
+plain="$("$TMD" -f plainctl.tar 2>/dev/null)"
+
+for spec in "gz:gzip:-z" "xz:xz:-J" "bz2:bzip2:-j" "zst:zstd:--zstd"; do
+  ext="${spec%%:*}"
+  rest="${spec#*:}"
+  tool="${rest%%:*}"
+  flag="${rest#*:}"
+
+  if ! command -v "$tool" > /dev/null 2>&1; then
+    note "$tool is not installed — skipping .tar.$ext"
+    continue
+  fi
+  if ! tar "$flag" -cf "c.tar.$ext" tree 2>/dev/null; then
+    note "this tar cannot write .tar.$ext — skipping"
+    continue
+  fi
+
+  # The listing must be identical to the uncompressed one: the compression is
+  # a wrapper, not a difference.
+  got="$("$TMD" -f "c.tar.$ext" 2>/dev/null)"
+  if [ "$got" = "$plain" ]; then
+    ok ".tar.$ext reads exactly as the uncompressed archive does"
+  else
+    bad ".tar.$ext did not match the uncompressed listing"
+  fi
+
+  named="$("$TMD" -f "c.tar.$ext" -i 2>/dev/null | grep -c "compression")"
+  check ".tar.$ext is named as $tool-compressed in the report" "$named" "1"
+
+  # And through standard input, all three ways of getting it there. This is the
+  # case the design turns on: the first bytes have already been read to identify
+  # the file, a pipe cannot be rewound to give them back, so they have to be
+  # handed to the decompressor by the process that feeds it.
+  #
+  #   cat FILE | tmd   a real pipe, nothing seekable behind it
+  #   tmd < FILE       stdin redirected from a file
+  #   tmd -f -         the same, named explicitly
+  route_ok=1
+  for piped in "$(cat "c.tar.$ext" | "$TMD" 2>/dev/null)" \
+               "$("$TMD" < "c.tar.$ext" 2>/dev/null)" \
+               "$("$TMD" -f - < "c.tar.$ext" 2>/dev/null)"; do
+    if [ "$piped" != "$plain" ]; then
+      route_ok=0
+    fi
+  done
+  if [ "$route_ok" = "1" ]; then
+    ok ".tar.$ext reads the same piped, redirected and as -f -"
+  else
+    bad ".tar.$ext differs when it arrives on standard input"
+  fi
+done
+
+# An uncompressed archive must not claim to be compressed.
+plain_codec="$("$TMD" -f gnu.tar -i 2>/dev/null | grep -c 'compression' || true)"
+check "a plain archive reports no compression" "$plain_codec" "0"
+
+# A decompressor that is not installed is a clear message, not an empty archive.
+if command -v gzip > /dev/null 2>&1; then
+  tar -z -cf missing.tar.gz tree 2>/dev/null
+  err="$(PATH=/nonexistent "$TMD" -f missing.tar.gz 2>&1 >/dev/null || true)"
+  check_contains "a missing decompressor says which tool is missing" "$err" \
+                 "gzip is not installed"
+fi
+
+# Corrupt compressed data must not be reported as a short but valid archive:
+# what came out is a prefix, and saying so is the whole point.
+if command -v gzip > /dev/null 2>&1; then
+  tar -z -cf trunc.tar.gz tree 2>/dev/null
+  head -c 120 trunc.tar.gz > cut.tar.gz
+  "$TMD" -f cut.tar.gz > /dev/null 2>&1
+  check_status "a truncated .tar.gz is an error, not a partial success" "$?" 1
+  err="$("$TMD" -f cut.tar.gz 2>&1 >/dev/null || true)"
+  check_contains "and says the stream ended badly" "$err" "ended badly"
+fi
+
+# A container that is not tar in a wrapper still says what it is.
+printf 'PK\003\004rest of it' > notatar.zip
+err="$("$TMD" -f notatar.zip 2>&1 >/dev/null || true)"
+check_contains "a zip is named, not guessed at" "$err" "zip data, not a tar archive"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ --diff\033[0m\n'
 
 mkdir -p dtree
@@ -786,11 +876,17 @@ check "two archives get a banner each" "$both" "2"
 # ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ damaged and mistaken input\033[0m\n'
 
+# A .tar.gz used to be refused here, with a message naming the pipe to type.
+# Since v1.5.0.0 it is read directly, so what this checks is the opposite: the
+# wrapper is opened, and the listing is the same one the uncompressed archive
+# gives. The refusal tests moved to the "compressed archives" section, where
+# they now cover the cases that genuinely still fail -- a missing tool and a
+# truncated stream.
 gzip -c gnu.tar > gnu.tar.gz
-err="$("$TMD" -f gnu.tar.gz 2>&1 >/dev/null)"
-check_status "a .tar.gz fails rather than being half-read" "$?" 1
-check_contains "a .tar.gz says which wrapper it is in" "$err" "gzip"
-check_contains "a .tar.gz names the command that opens it" "$err" "gzip -dc"
+check "a .tar.gz reads as the archive inside it" \
+      "$("$TMD" -f gnu.tar.gz 2>/dev/null)" "$("$TMD" -f gnu.tar 2>/dev/null)"
+"$TMD" -f gnu.tar.gz > /dev/null 2>&1
+check_status "and succeeds" "$?" 0
 
 "$TMD" -f /dev/null > /dev/null 2>&1
 check_status "an empty file is an error" "$?" 1

@@ -42,7 +42,8 @@ int main(void)
     test_pax();
     test_render();
 
-    if (tmd_test_failures == 0) {
+    if (tmd_test_failures == 0)
+    {
         (void)printf("  \033[92mok\033[0m  %d checks across %d cases\n",
                      tmd_test_checks, case_count);
         return 0;

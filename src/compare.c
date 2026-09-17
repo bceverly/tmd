@@ -106,7 +106,8 @@ static size_t hash_path(const char *s)
      * reason to be cleverer: a collision costs one extra strcmp. */
     uint64_t h = 1469598103934665603ULL;
 
-    while (*s) {
+    while (*s)
+    {
         h ^= (unsigned char)*s++;
         h *= 1099511628211ULL;
     }
@@ -124,7 +125,8 @@ static void index_free(struct index *ix)
 {
     size_t i;
 
-    for (i = 0; i < ix->npairs; i++) {
+    for (i = 0; i < ix->npairs; i++)
+    {
         free(ix->pairs[i].path);
         free(ix->pairs[i].expected.linkpath);
         free(ix->pairs[i].found.linkpath);
@@ -140,10 +142,12 @@ static void index_rehash(struct index *ix)
     size_t *fresh = tmd_xcalloc(n, sizeof(*fresh));
     size_t  i;
 
-    for (i = 0; i < ix->npairs; i++) {
+    for (i = 0; i < ix->npairs; i++)
+    {
         size_t slot = hash_path(ix->pairs[i].path) % n;
 
-        while (fresh[slot]) {
+        while (fresh[slot])
+        {
             slot = (slot + 1) % n;
         }
         fresh[slot] = i + 1;
@@ -158,7 +162,8 @@ static struct pair *index_get(struct index *ix, const char *path)
 {
     size_t slot;
 
-    if (ix->npairs * 2 >= ix->nslots) {
+    if (ix->npairs * 2 >= ix->nslots)
+    {
         index_rehash(ix);
     }
     /*
@@ -173,20 +178,23 @@ static struct pair *index_get(struct index *ix, const char *path)
      */
     slot = hash_path(path) % ix->nslots;
     /* NOLINTNEXTLINE(clang-analyzer-security.ArrayBound) */
-    while (ix->slots[slot] != 0) {
+    while (ix->slots[slot] != 0)
+    {
         /* The slot holds a 1-based index into `pairs`. The bound is checked
          * rather than assumed: it is an invariant of this file and not of the
          * type, so nothing but this loop enforces it -- which is also what the
          * clang analyzer said when it could not follow the reasoning. */
         size_t at = ix->slots[slot] - 1;
 
-        if (at < ix->npairs && strcmp(ix->pairs[at].path, path) == 0) {
+        if (at < ix->npairs && strcmp(ix->pairs[at].path, path) == 0)
+        {
             return &ix->pairs[at];
         }
         slot = (slot + 1) % ix->nslots;
     }
 
-    if (ix->npairs == ix->cap) {
+    if (ix->npairs == ix->cap)
+    {
         ix->cap = ix->cap ? ix->cap * 2 : 256;
         ix->pairs = tmd_xrealloc(ix->pairs, ix->cap * sizeof(*ix->pairs));
     }
@@ -195,7 +203,8 @@ static struct pair *index_get(struct index *ix, const char *path)
     ix->slots[slot] = ix->npairs + 1;
     ix->npairs++;
 
-    if (ix->npairs == COMPARE_LOUD_AT && !ix->warned_large) {
+    if (ix->npairs == COMPARE_LOUD_AT && !ix->warned_large)
+    {
         (void)fprintf(stderr, "tmd: comparing %d members; the index is held in "
                               "memory\n", COMPARE_LOUD_AT);
         ix->warned_large = true;
@@ -223,24 +232,30 @@ static void side_from_entry(struct side *s, const struct tmd_entry *e)
 }
 
 /* Only the fields both sides actually state. */
-static unsigned side_differences(const struct side *want, const struct side *got)
+static unsigned side_differences(const struct side *want,
+                                 const struct side *got)
 {
     unsigned d = 0;
 
-    if (want->have_size && got->have_size && want->size != got->size) {
+    if (want->have_size && got->have_size && want->size != got->size)
+    {
         d |= D_SIZE;
     }
-    if (want->have_mode && got->have_mode && want->mode != got->mode) {
+    if (want->have_mode && got->have_mode && want->mode != got->mode)
+    {
         d |= D_MODE;
     }
-    if (want->have_mtime && got->have_mtime && want->mtime != got->mtime) {
+    if (want->have_mtime && got->have_mtime && want->mtime != got->mtime)
+    {
         d |= D_MTIME;
     }
-    if (want->have_kind && got->have_kind && want->kind != got->kind) {
+    if (want->have_kind && got->have_kind && want->kind != got->kind)
+    {
         d |= D_KIND;
     }
     if (want->linkpath && got->linkpath &&
-        strcmp(want->linkpath, got->linkpath) != 0) {
+        strcmp(want->linkpath, got->linkpath) != 0)
+    {
         d |= D_LINK;
     }
     return d;
@@ -262,11 +277,14 @@ static bool selected(const struct tmd_options *opt, const char *path)
 {
     size_t i;
 
-    if (opt->nmatch == 0) {
+    if (opt->nmatch == 0)
+    {
         return true;
     }
-    for (i = 0; i < opt->nmatch; i++) {
-        if (tmd_path_matches(path, opt->match[i])) {
+    for (i = 0; i < opt->nmatch; i++)
+    {
+        if (tmd_path_matches(path, opt->match[i]))
+        {
             return true;
         }
     }
@@ -290,24 +308,37 @@ static bool read_into(struct index *ix, const char *path, bool as_found,
     bool                    ok = true;
 
     src = tmd_source_open(path, &err);
-    if (!src) {
-        (void)fprintf(stderr, "tmd: %s\n", err ? err : "cannot open the archive");
+    if (!src)
+    {
+        (void)fprintf(stderr, "tmd: %s\n",
+                      err ? err : "cannot open the archive");
         free(err);
         return false;
     }
     reader = tmd_reader_new(src);
 
-    while ((rc = tmd_reader_next(reader, &e)) == 1) {
+    while ((rc = tmd_reader_next(reader, &e)) == 1)
+    {
         struct pair *p;
 
-        if (!e->path || !selected(opt, e->path)) {
+        if (!e->path || !selected(opt, e->path))
+        {
             continue;
         }
         p = index_get(ix, e->path);
         side_from_entry(as_found ? &p->found : &p->expected, e);
     }
-    if (rc < 0) {
+    if (rc < 0)
+    {
         (void)fprintf(stderr, "tmd: %s\n", tmd_reader_error(reader));
+        ok = false;
+    }
+    /* A comparison against half an archive is worse than no comparison. */
+    if (tmd_source_codec_failed(src))
+    {
+        (void)fprintf(stderr, "tmd: %s: the %s stream ended badly; not "
+                              "comparing a partial archive\n",
+                      path, tmd_source_codec(src));
         ok = false;
     }
     tmd_reader_free(reader);
@@ -337,12 +368,14 @@ static bool read_manifest(struct index *ix, const char *path,
     bool    skipping = false;
 
     f = fopen(path, "r"); /* Flawfinder: ignore */
-    if (!f) {
+    if (!f)
+    {
         (void)fprintf(stderr, "tmd: %s: cannot open the manifest\n", path);
         return false;
     }
 
-    while (fgets(line, sizeof(line), f)) {
+    while (fgets(line, sizeof(line), f))
+    {
         char       *p = line;
         char       *end;
         const char *name;
@@ -365,12 +398,14 @@ static bool read_manifest(struct index *ix, const char *path,
          */
         bool overlong = (len == sizeof(line) - 1 && line[len - 1] != '\n');
 
-        if (skipping) {
+        if (skipping)
+        {
             skipping = overlong; /* still inside the long line */
             continue;
         }
         lineno++;
-        if (overlong) {
+        if (overlong)
+        {
             (void)fprintf(stderr, "tmd: %s:%zu: line is longer than %zu bytes; "
                                   "skipped\n", path, lineno, sizeof(line) - 1);
             ok = false;
@@ -379,13 +414,16 @@ static bool read_manifest(struct index *ix, const char *path,
         }
         end = p + len;
 
-        while (end > p && (end[-1] == '\n' || end[-1] == '\r')) {
+        while (end > p && (end[-1] == '\n' || end[-1] == '\r'))
+        {
             *--end = '\0';
         }
-        while (*p == ' ' || *p == '\t') {
+        while (*p == ' ' || *p == '\t')
+        {
             p++;
         }
-        if (*p == '\0' || *p == '#') {
+        if (*p == '\0' || *p == '#')
+        {
             continue;
         }
 
@@ -395,20 +433,26 @@ static bool read_manifest(struct index *ix, const char *path,
             char *sep = p;
             bool  digits = true;
 
-            while (*sep && *sep != ' ' && *sep != '\t') {
-                if (*sep < '0' || *sep > '9') {
+            while (*sep && *sep != ' ' && *sep != '\t')
+            {
+                if (*sep < '0' || *sep > '9')
+                {
                     digits = false;
                 }
                 sep++;
             }
-            if (*sep && (digits || (sep - first == 1 && *first == '-'))) {
+            if (*sep && (digits || (sep - first == 1 && *first == '-')))
+            {
                 char *rest = sep;
 
-                while (*rest == ' ' || *rest == '\t') {
+                while (*rest == ' ' || *rest == '\t')
+                {
                     rest++;
                 }
-                if (*rest) {
-                    if (digits) {
+                if (*rest)
+                {
+                    if (digits)
+                    {
                         size = strtoull(first, NULL, 10);
                         have_size = true;
                     }
@@ -418,13 +462,15 @@ static bool read_manifest(struct index *ix, const char *path,
         }
 
         name = p;
-        if (!*name) {
+        if (!*name)
+        {
             (void)fprintf(stderr, "tmd: %s:%zu: no path on this line\n",
                           path, lineno);
             ok = false;
             continue;
         }
-        if (!selected(opt, name)) {
+        if (!selected(opt, name))
+        {
             continue;
         }
         {
@@ -458,21 +504,25 @@ static void field_list(struct tmd_buf *b, unsigned d, const struct side *want,
     const char *arrow = verify ? " expected, " : " -> ";
     const char *tail = verify ? " found" : "";
 
-    if (d & D_KIND) {
+    if (d & D_KIND)
+    {
         tmd_buf_addf(b, "%skind %s%s%s%s", b->len ? ", " : "",
                      tmd_kind_name(want->kind), arrow,
                      tmd_kind_name(got->kind), tail);
     }
-    if (d & D_SIZE) {
+    if (d & D_SIZE)
+    {
         tmd_buf_addf(b, "%ssize %llu%s%llu%s", b->len ? ", " : "",
                      (unsigned long long)want->size, arrow,
                      (unsigned long long)got->size, tail);
     }
-    if (d & D_MODE) {
+    if (d & D_MODE)
+    {
         tmd_buf_addf(b, "%smode %04o%s%04o%s", b->len ? ", " : "",
                      want->mode, arrow, got->mode, tail);
     }
-    if (d & D_MTIME) {
+    if (d & D_MTIME)
+    {
         struct tmd_time a = { want->mtime, 0, true, NULL };
         struct tmd_time c = { got->mtime, 0, true, NULL };
         char            before[64];
@@ -483,7 +533,8 @@ static void field_list(struct tmd_buf *b, unsigned d, const struct side *want,
         tmd_buf_addf(b, "%smtime %s%s%s%s", b->len ? ", " : "", before, arrow,
                      after, tail);
     }
-    if (d & D_LINK) {
+    if (d & D_LINK)
+    {
         tmd_buf_addf(b, "%starget %s%s%s%s", b->len ? ", " : "",
                      want->linkpath, arrow, got->linkpath, tail);
     }
@@ -506,27 +557,32 @@ static void report_text(FILE *out, struct index *ix, const char *want_name,
     (void)fprintf(out, "--- %s\n", want_name);
     (void)fprintf(out, "+++ %s\n", got_name);
 
-    for (i = 0; i < ix->npairs; i++) {
+    for (i = 0; i < ix->npairs; i++)
+    {
         struct pair *p = &ix->pairs[i];
         unsigned     d;
 
-        if (p->expected.present && !p->found.present) {
+        if (p->expected.present && !p->found.present)
+        {
             t->removed++;
             (void)fprintf(out, "- %s%s\n", p->path,
                           verify ? "   expected, not in the archive" : "");
             continue;
         }
-        if (!p->expected.present && p->found.present) {
+        if (!p->expected.present && p->found.present)
+        {
             t->added++;
             (void)fprintf(out, "+ %s%s\n", p->path,
                           verify ? "   in the archive, not expected" : "");
             continue;
         }
         d = side_differences(&p->expected, &p->found);
-        if (p->expected.count > 1 || p->found.count > 1) {
+        if (p->expected.count > 1 || p->found.count > 1)
+        {
             t->duplicated++;
         }
-        if (d == 0) {
+        if (d == 0)
+        {
             t->same++;
             continue;
         }
@@ -548,7 +604,8 @@ static void report_text(FILE *out, struct index *ix, const char *want_name,
                   verify ? "unexpected" : "added",
                   (unsigned long long)t->removed,
                   verify ? "missing" : "removed");
-    if (t->duplicated) {
+    if (t->duplicated)
+    {
         (void)fprintf(out, "  %llu path%s appear more than once; the last "
                            "occurrence is the one compared\n",
                       (unsigned long long)t->duplicated,
@@ -578,23 +635,29 @@ static void report_json(FILE *out, struct index *ix, const char *want_name,
     tmd_json_escape(&b, got_name);
 
     tmd_buf_addstr(&b, ", \"members\": [");
-    for (i = 0; i < ix->npairs; i++) {
+    for (i = 0; i < ix->npairs; i++)
+    {
         struct pair *p = &ix->pairs[i];
         unsigned     d;
         const char  *state;
 
-        if (p->expected.present && !p->found.present) {
+        if (p->expected.present && !p->found.present)
+        {
             state = verify ? "missing" : "removed";
             t->removed++;
-        } else if (!p->expected.present && p->found.present) {
+        } else if (!p->expected.present && p->found.present)
+        {
             state = verify ? "unexpected" : "added";
             t->added++;
-        } else {
+        } else
+        {
             d = side_differences(&p->expected, &p->found);
-            if (p->expected.count > 1 || p->found.count > 1) {
+            if (p->expected.count > 1 || p->found.count > 1)
+            {
                 t->duplicated++;
             }
-            if (d == 0) {
+            if (d == 0)
+            {
                 t->same++;
                 continue; /* identical members are counted, not listed */
             }
@@ -608,34 +671,42 @@ static void report_json(FILE *out, struct index *ix, const char *want_name,
         tmd_json_escape(&b, p->path);
         tmd_buf_addf(&b, ", \"state\": \"%s\"", state);
 
-        if (strcmp(state, "changed") == 0) {
+        if (strcmp(state, "changed") == 0)
+        {
             d = side_differences(&p->expected, &p->found);
             tmd_buf_addstr(&b, ", \"fields\": {");
-            if (d & D_SIZE) {
+            if (d & D_SIZE)
+            {
                 tmd_buf_addf(&b, "\"size\": {\"%s\": %llu, \"%s\": %llu}",
                              k_from, (unsigned long long)p->expected.size,
                              k_to, (unsigned long long)p->found.size);
             }
-            if (d & D_MODE) {
-                tmd_buf_addf(&b, "%s\"mode\": {\"%s\": \"%04o\", \"%s\": \"%04o\"}",
+            if (d & D_MODE)
+            {
+                tmd_buf_addf(&b, "%s\"mode\": {\"%s\": \"%04o\", "
+                                 "\"%s\": \"%04o\"}",
                              (d & D_SIZE) ? ", " : "",
                              k_from, p->expected.mode, k_to, p->found.mode);
             }
-            if (d & D_MTIME) {
+            if (d & D_MTIME)
+            {
                 tmd_buf_addf(&b, "%s\"mtime\": {\"%s\": %lld, \"%s\": %lld}",
                              (d & (D_SIZE | D_MODE)) ? ", " : "",
                              k_from, (long long)p->expected.mtime,
                              k_to, (long long)p->found.mtime);
             }
-            if (d & D_KIND) {
+            if (d & D_KIND)
+            {
                 tmd_buf_addf(&b, "%s\"kind\": {\"%s\": \"%s\", \"%s\": \"%s\"}",
                              (d & (D_SIZE | D_MODE | D_MTIME)) ? ", " : "",
                              k_from, tmd_kind_name(p->expected.kind),
                              k_to, tmd_kind_name(p->found.kind));
             }
-            if (d & D_LINK) {
+            if (d & D_LINK)
+            {
                 tmd_buf_addf(&b, "%s\"linkpath\": {\"%s\": ",
-                             (d & (D_SIZE | D_MODE | D_MTIME | D_KIND)) ? ", " : "",
+                             (d & (D_SIZE | D_MODE | D_MTIME | D_KIND))
+                                 ? ", " : "",
                              k_from);
                 tmd_json_escape(&b, p->expected.linkpath);
                 tmd_buf_addf(&b, ", \"%s\": ", k_to);
@@ -680,18 +751,22 @@ static int finish(FILE *out, struct index *ix, const char *want_name,
      * archives filtered to nothing by -m, would be undefined behavior rather
      * than a trivially empty report.
      */
-    if (ix->npairs > 0) {
+    if (ix->npairs > 0)
+    {
         qsort(ix->pairs, ix->npairs, sizeof(*ix->pairs), pair_cmp);
     }
     /* The slots index into `pairs` and the sort just moved them, so it must not
      * be used again; nothing below does. */
 
-    if (opt->output == TMD_OUT_JSON) {
+    if (opt->output == TMD_OUT_JSON)
+    {
         report_json(out, ix, want_name, got_name, opt, &t, verify);
-    } else {
+    } else
+    {
         report_text(out, ix, want_name, got_name, opt, &t, verify);
     }
-    if (t.added || t.removed || t.changed) {
+    if (t.added || t.removed || t.changed)
+    {
         return TMD_EXIT_DIFFER;
     }
     return TMD_EXIT_OK;
@@ -708,7 +783,8 @@ int tmd_diff_archives(const char *from, const char *to, FILE *out,
     int          status;
 
     index_init(&ix);
-    if (!read_into(&ix, from, false, opt) || !read_into(&ix, to, true, opt)) {
+    if (!read_into(&ix, from, false, opt) || !read_into(&ix, to, true, opt))
+    {
         index_free(&ix);
         return TMD_EXIT_ERROR;
     }
@@ -725,7 +801,8 @@ int tmd_verify_archive(const char *archive, const char *manifest, FILE *out,
 
     index_init(&ix);
     if (!read_manifest(&ix, manifest, opt) ||
-        !read_into(&ix, archive, true, opt)) {
+        !read_into(&ix, archive, true, opt))
+    {
         index_free(&ix);
         return TMD_EXIT_ERROR;
     }

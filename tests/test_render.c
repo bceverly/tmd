@@ -222,18 +222,21 @@ static char *render_to_string(const struct tmd_options *opt,
     size_t             got;
     size_t             i;
 
-    if (fd < 0) {
+    if (fd < 0)
+    {
         return tmd_xstrdup("");
     }
     f = fdopen(fd, "w+b");
-    if (!f) {
+    if (!f)
+    {
         (void)remove(path);
         return tmd_xstrdup("");
     }
 
     rd = tmd_render_new(f, opt, 1);
     tmd_render_archive_begin(rd, archive);
-    for (i = 0; i < count; i++) {
+    for (i = 0; i < count; i++)
+    {
         tmd_render_entry(rd, &entries[i]);
     }
     tmd_render_archive_end(rd, archive);
@@ -243,7 +246,8 @@ static char *render_to_string(const struct tmd_options *opt,
     (void)fflush(f);
     rewind(f);
     tmd_buf_init(&out);
-    while ((got = fread(chunk, 1, sizeof(chunk), f)) > 0) {
+    while ((got = fread(chunk, 1, sizeof(chunk), f)) > 0)
+    {
         tmd_buf_add(&out, chunk, got);
     }
     (void)fclose(f);
@@ -662,7 +666,8 @@ static void test_match_and_sort(void)
     a.format = TMD_FMT_PAX;
     a.entries = 3;
 
-    for (i = 0; i < 3; i++) {
+    for (i = 0; i < 3; i++)
+    {
         make_entry(&e[i]);
     }
     e[0].path = (char *)"etc/b.conf";
@@ -799,7 +804,8 @@ static void test_stat_mode(void)
     a.format = TMD_FMT_PAX;
     a.entries = 4;
 
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         make_entry(&e[i]);
         e[i].offset = i * 1024;
     }
@@ -850,7 +856,8 @@ static void test_stat_mode(void)
     free(out);
 
     TEST_CASE("one timestamp for every member reads as normalized");
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         e[i].mtime.sec = 1700000000;
     }
     out = render_to_string(&opt, &a, e, 4);
@@ -859,7 +866,8 @@ static void test_stat_mode(void)
     free(out);
 
     TEST_CASE("every member at the epoch reads as discarded, not normalized");
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         e[i].mtime.sec = 0;
     }
     out = render_to_string(&opt, &a, e, 4);
@@ -867,7 +875,8 @@ static void test_stat_mode(void)
     free(out);
 
     TEST_CASE("a member dated in the future is called out");
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         e[i].mtime.sec = 1700000000;
     }
     e[0].mtime.sec = 4000000000LL; /* 2096 */
@@ -876,7 +885,8 @@ static void test_stat_mode(void)
     free(out);
 
     TEST_CASE("a member older than tar itself is called out");
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         e[i].mtime.sec = 1700000000;
     }
     e[0].mtime.sec = 100000; /* 1970 */
@@ -885,7 +895,8 @@ static void test_stat_mode(void)
     free(out);
 
     TEST_CASE("--stat reaches the JSON as its own object");
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 4; i++)
+    {
         e[i].mtime.sec = 1700000000;
     }
     default_options(&opt);
@@ -1066,7 +1077,8 @@ static void test_created_and_order(void)
 
         a.features.nroots = 8;
         a.features.roots_truncated = true;
-        for (i = 0; i < 8; i++) {
+        for (i = 0; i < 8; i++)
+        {
             a.features.roots[i][0] = (char)('a' + i);
             a.features.roots[i][1] = '\0';
         }

@@ -105,6 +105,14 @@ bool  tmd_base64_decode(const char *s, struct tmd_buf *out);
  * as a plain file.
  */
 /*
+ * Copy from one descriptor to another, writing `prefix` first.
+ *
+ * Handles short reads and short writes. False means a write failed -- the far
+ * end of the destination went away.
+ */
+bool tmd_copy_fd(int from_fd, int to_fd, const void *prefix, size_t prefix_len);
+
+/*
  * Would extracting this member write outside the current directory?
  *
  * tmd_path_escapes covers absolute paths and ".." traversals; tmd_link_escapes

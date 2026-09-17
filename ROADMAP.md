@@ -18,6 +18,7 @@ asked of a roadmap a year later.
 
 | Item | Status |
 |---|---|
+| [Read compressed archives directly](#read-compressed-archives-directly-v1500) | **Shipped** in v1.5.0.0 |
 | [`--diff` between two archives](#--diff-between-two-archives-v1500) | **Shipped** in v1.5.0.0 |
 | [`--verify` against a manifest](#--verify-against-a-manifest-v1500) | **Shipped** in v1.5.0.0 |
 | [Promote `LIBARCHIVE.creationtime` to a `created` line](#promote-libarchivecreationtime-to-a-created-line-v1500) | **Shipped** in v1.5.0.0 |
@@ -28,10 +29,12 @@ asked of a roadmap a year later.
 | [Find a member by name: `-m` / `--match`](#find-a-member-by-name--m----match-pattern-v1300) | **Shipped** in v1.3.0.0 |
 | [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
-| [Read compressed archives directly](#other-ideas) | Not started |
-| [More architectures in CI](#other-ideas) | Not started |
+| [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1500) | **aarch64 shipped** in v1.5.0.0; big-endian still open |
 
-Two open, ten shipped, none declined.
+One and a half open, eleven and a half shipped, none declined.
+
+The half is *More architectures in CI*: the aarch64 leg is running, and the
+qemu-based big-endian leg it also asked for is not.
 
 The minor moves each time the command line grows — the rule v1.2.0.0 set when
 `-t` was added. v1.5.0.0 adds `--diff` and `--verify`, a new exit status (5),
@@ -45,17 +48,69 @@ spent either way.
 
 Unordered, and none of them thought through as far as the item above.
 
-- **Read compressed archives directly.** Today a `.tar.gz` is recognized and the
-  user is told which command to pipe through. Doing it internally means linking
-  zlib, which costs the "libc only" property that keeps the attack surface
-  small — so if it happens it should be `dlopen`-on-demand, or a compile-time
-  option that is off by default, and never a hard dependency.
-- **More architectures in CI.** The code is endian-clean by construction (every
-  field is parsed byte by byte) but nothing proves it. A `qemu`-based
-  big-endian leg would.
 ---
 
 ## Shipped
+
+### Read compressed archives directly (v1.5.0.0)
+
+**What shipped:** `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`,
+`.tar.lz` and `.tar.Z`, recognized by content rather than extension and unpacked
+on the way in — from a file, from a redirect, or from a pipe with nothing
+seekable behind it.
+
+**The sketch's premise was wrong about the cost.** It assumed "doing it
+internally means linking zlib", and concluded the feature had to be
+`dlopen`-on-demand or a compile-time option off by default. There is a third
+way, and it is what GNU tar has always done: `tar -z` forks gzip. Running the
+system's decompressor as a separate process costs no linked library at all, so
+the "libc only" property survives intact — `make security` still checks it with
+ldd and would fail if anything else appeared — and it covers every format in the
+table at once instead of one library per format.
+
+It is also the better trade on the merits, not just the cheaper one: the code
+that parses hostile *compressed* bytes then runs in a different process from the
+code that parses hostile *tar* headers.
+
+Three things the sketch did not raise, each of which turned out to matter:
+
+- **Standard input cannot be rewound.** tmd has to read the first bytes to learn
+  what the file is, and a pipe will not give them back. So there are three
+  processes: a feeder that writes the bytes already read and then copies the
+  rest, the decompressor, and tmd. A seekable file could be rewound instead, but
+  one path that always works beats two that each work sometimes.
+- **A truncated stream must not look like a short archive.** A corrupt `.tar.gz`
+  decompresses part way and stops, and what reaches the reader is a
+  well-formed *prefix*. Reporting that as a complete listing with exit 0 was the
+  behavior on the first attempt, and it is a silent wrong answer; tmd now checks
+  the decompressor's exit status.
+- **A missing tool must say so.** execvp failing looks exactly like an empty
+  file, so the first bytes of the decompressed stream are read at open time and
+  a 127 exit is reported as "gzip is not installed".
+
+The Debian package declares the tools as runtime dependencies: `xz-utils` as a
+Depends, `bzip2` and `zstd` as Recommends, `lz4` and `lzip` as Suggests. `gzip`
+is deliberately absent — it is Essential on every Debian system, and depending
+on an essential package is a Policy violation lintian rejects.
+
+### More architectures in CI — the aarch64 half (v1.5.0.0)
+
+**What shipped:** a `Tests (aarch64)` job on GitHub's native arm runners,
+building and running the unit and end-to-end suites there.
+
+**Half the item, and the half worth having first.** Everything else runs on
+x86-64, where three things are true that are not true everywhere: little-endian,
+64-bit `time_t`, and *signed* plain `char`. aarch64 moves the last of those —
+`char` is unsigned there — and exercises a different ABI, on native hardware, so
+it costs no more than the x86 legs.
+
+It is still little-endian, so a genuine byte-order bug would survive it. The
+qemu-based big-endian leg the sketch asked for is slower by a factor of ten or
+more and belongs in a scheduled job rather than on every push, so it stays open.
+
+The job asserts `uname -m` is aarch64 before doing anything else: a runner label
+that silently fell back to x86 would leave this reporting success while testing
+nothing.
 
 ### `--diff` between two archives (v1.5.0.0)
 

@@ -23,6 +23,19 @@
 
 struct tmd_source;
 
+/*
+ * What a file is, when it is not a plain tar archive.
+ *
+ * The table lives in source.c because that is where it is acted on — a
+ * compressed file is decompressed there — and the reader borrows it for its
+ * diagnostics so the two cannot disagree about what a magic number means.
+ */
+struct wrapper;
+const struct wrapper *tmd_wrapper_lookup(const void *bytes, size_t len);
+const char           *tmd_wrapper_name(const struct wrapper *w);
+/* The program that unpacks it, or NULL where no program helps. */
+const char           *tmd_wrapper_command(const struct wrapper *w);
+
 /* Returns NULL and sets *err (malloc'd, caller frees) when the file will not
  * open. "-" is accepted as a name for standard input. */
 struct tmd_source *tmd_source_open(const char *path, char **err);
@@ -46,6 +59,20 @@ uint64_t tmd_source_offset(const struct tmd_source *s);
 uint64_t tmd_source_size(const struct tmd_source *s);
 
 const char *tmd_source_name(const struct tmd_source *s);
+
+/* "gzip", "xz", ... when the source was decompressed on the way in; NULL when
+ * the file was a plain tar archive. */
+const char *tmd_source_codec(const struct tmd_source *s);
+
+/*
+ * True when the decompressor gave up part way.
+ *
+ * Only meaningful after the stream has been read to its end. A partial archive
+ * read out of a corrupt .tar.gz is not an archive that ends early -- it is an
+ * answer that cannot be trusted, and saying so is the difference between a
+ * report and a guess.
+ */
+bool tmd_source_codec_failed(const struct tmd_source *s);
 
 /* True once a read has hit the end. */
 bool tmd_source_at_eof(const struct tmd_source *s);

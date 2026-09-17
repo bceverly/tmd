@@ -151,7 +151,8 @@ static void kv_free(struct tmd_kv *kv, size_t n)
 {
     size_t i;
 
-    for (i = 0; i < n; i++) {
+    for (i = 0; i < n; i++)
+    {
         free(kv[i].key);
         free(kv[i].value);
     }
@@ -179,12 +180,15 @@ static void note_pax_key(struct tmd_features *f, const char *key)
 {
     size_t i;
 
-    for (i = 0; i < f->npax_keys; i++) {
-        if (strcmp(f->pax_keys[i], key) == 0) {
+    for (i = 0; i < f->npax_keys; i++)
+    {
+        if (strcmp(f->pax_keys[i], key) == 0)
+        {
             return;
         }
     }
-    if (f->npax_keys >= sizeof(f->pax_keys) / sizeof(f->pax_keys[0])) {
+    if (f->npax_keys >= sizeof(f->pax_keys) / sizeof(f->pax_keys[0]))
+    {
         f->pax_keys_truncated = true;
         return;
     }
@@ -198,8 +202,10 @@ static const char *kv_get(const struct tmd_kv *list, size_t n, const char *key)
     const char *found = NULL;
     size_t      i;
 
-    for (i = 0; i < n; i++) {
-        if (strcmp(list[i].key, key) == 0) {
+    for (i = 0; i < n; i++)
+    {
+        if (strcmp(list[i].key, key) == 0)
+        {
             found = list[i].value;
         }
     }
@@ -227,7 +233,8 @@ uint32_t tmd_header_checksum_unsigned(const char block[TMD_BLOCK_SIZE])
     uint32_t sum = 0;
     size_t   i;
 
-    for (i = 0; i < TMD_BLOCK_SIZE; i++) {
+    for (i = 0; i < TMD_BLOCK_SIZE; i++)
+    {
         sum += (i >= F_CHKSUM && i < F_CHKSUM + 8) ? (uint32_t)' ' : p[i];
     }
     return sum;
@@ -238,7 +245,8 @@ int32_t tmd_header_checksum_signed(const char block[TMD_BLOCK_SIZE])
     int32_t sum = 0;
     size_t  i;
 
-    for (i = 0; i < TMD_BLOCK_SIZE; i++) {
+    for (i = 0; i < TMD_BLOCK_SIZE; i++)
+    {
         sum += (i >= F_CHKSUM && i < F_CHKSUM + 8) ? (int32_t)' '
                                                    : (int32_t)(signed char)block[i];
     }
@@ -249,8 +257,10 @@ static bool block_is_zero(const char block[TMD_BLOCK_SIZE])
 {
     size_t i;
 
-    for (i = 0; i < TMD_BLOCK_SIZE; i++) {
-        if (block[i] != '\0') {
+    for (i = 0; i < TMD_BLOCK_SIZE; i++)
+    {
+        if (block[i] != '\0')
+        {
             return false;
         }
     }
@@ -263,7 +273,8 @@ static bool block_is_zero(const char block[TMD_BLOCK_SIZE])
 
 const char *tmd_format_name(enum tmd_format f)
 {
-    switch (f) {
+    switch (f)
+    {
     case TMD_FMT_V7:    return "v7";
     case TMD_FMT_USTAR: return "ustar";
     case TMD_FMT_STAR:  return "star";
@@ -275,7 +286,8 @@ const char *tmd_format_name(enum tmd_format f)
 
 const char *tmd_kind_name(enum tmd_kind k)
 {
-    switch (k) {
+    switch (k)
+    {
     case TMD_KIND_FILE:       return "file";
     case TMD_KIND_HARDLINK:   return "hardlink";
     case TMD_KIND_SYMLINK:    return "symlink";
@@ -294,7 +306,8 @@ const char *tmd_kind_name(enum tmd_kind k)
 
 const char *tmd_typeflag_name(char typeflag)
 {
-    switch (typeflag) {
+    switch (typeflag)
+    {
     case '\0': return "regular (old, NUL)";
     case '0':  return "regular";
     case '1':  return "hard link";
@@ -333,7 +346,8 @@ enum tmd_kind tmd_kind_of(char typeflag, const char *name)
 {
     size_t len;
 
-    switch (typeflag) {
+    switch (typeflag)
+    {
     case '1': return TMD_KIND_HARDLINK;
     case '2': return TMD_KIND_SYMLINK;
     case '3': return TMD_KIND_CHARDEV;
@@ -355,7 +369,8 @@ enum tmd_kind tmd_kind_of(char typeflag, const char *name)
     }
 
     len = name ? strlen(name) : 0;
-    if (len > 0 && name[len - 1] == '/') {
+    if (len > 0 && name[len - 1] == '/')
+    {
         return TMD_KIND_DIR;
     }
     return TMD_KIND_FILE;
@@ -376,7 +391,8 @@ static void entry_reset(struct tmd_entry *e)
     free(e->sparse);
     free(e->ext_blocks);
     kv_free(e->pax, e->npax);
-    for (i = 0; i < e->nwarnings; i++) {
+    for (i = 0; i < e->nwarnings; i++)
+    {
         free(e->warnings[i].text);
     }
     free(e->warnings);
@@ -402,29 +418,34 @@ static void parse_pax(struct tmd_reader *r, const char *data, size_t len,
 {
     size_t pos = 0;
 
-    while (pos < len) {
+    while (pos < len)
+    {
         size_t start = pos;
         size_t record_len = 0;
         size_t key_start, eq;
 
         /* The length prefix. Bounded by the data we hold, so a record that
          * claims to be longer than the header cannot walk off the end. */
-        while (pos < len && data[pos] >= '0' && data[pos] <= '9') {
-            if (record_len > (SIZE_MAX - 9) / 10) {
+        while (pos < len && data[pos] >= '0' && data[pos] <= '9')
+        {
+            if (record_len > (SIZE_MAX - 9) / 10)
+            {
                 warn_archive(r, "pax-record-length-overflow", "pax record length at offset %zu overflows", start);
                 return;
             }
             record_len = record_len * 10 + (size_t)(data[pos] - '0');
             pos++;
         }
-        if (pos == start || pos >= len || data[pos] != ' ') {
+        if (pos == start || pos >= len || data[pos] != ' ')
+        {
             warn_archive(r, "pax-record-malformed", "malformed pax record at offset %zu (no \"<len> \" prefix)",
                          start);
             return;
         }
         pos++; /* the space */
 
-        if (record_len <= pos - start || start + record_len > len) {
+        if (record_len <= pos - start || start + record_len > len)
+        {
             warn_archive(r, "pax-record-length-mismatch",
                          "pax record at offset %zu claims %zu bytes, %zu remain",
                          start, record_len, len - start);
@@ -433,10 +454,12 @@ static void parse_pax(struct tmd_reader *r, const char *data, size_t len,
 
         key_start = pos;
         eq = key_start;
-        while (eq < start + record_len && data[eq] != '=') {
+        while (eq < start + record_len && data[eq] != '=')
+        {
             eq++;
         }
-        if (eq >= start + record_len) {
+        if (eq >= start + record_len)
+        {
             warn_archive(r, "pax-record-no-equals", "pax record at offset %zu has no '='", start);
             return;
         }
@@ -447,7 +470,8 @@ static void parse_pax(struct tmd_reader *r, const char *data, size_t len,
 
             /* The record ends with a newline that is part of its declared
              * length but not part of the value. */
-            if (value_len > 0 && data[eq + value_len] == '\n') {
+            if (value_len > 0 && data[eq + value_len] == '\n')
+            {
                 value_len--;
             }
             kv_add(list, count, key, data + eq + 1, value_len);
@@ -492,14 +516,17 @@ static void capture_block(struct tmd_reader *r, char kind,
 {
     struct tmd_entry *e = &r->entry;
 
-    if (!r->capture_raw) {
+    if (!r->capture_raw)
+    {
         return;
     }
-    if (e->n_ext_blocks >= MAX_RAW_EXT_BLOCKS) {
+    if (e->n_ext_blocks >= MAX_RAW_EXT_BLOCKS)
+    {
         e->ext_truncated = true;
         return;
     }
-    if (!e->ext_blocks) {
+    if (!e->ext_blocks)
+    {
         e->ext_blocks = tmd_xcalloc(MAX_RAW_EXT_BLOCKS, sizeof(*e->ext_blocks));
     }
     e->ext_blocks[e->n_ext_blocks].offset = offset;
@@ -516,7 +543,8 @@ static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
     char    *buf;
     size_t   got;
 
-    if (len > cap) {
+    if (len > cap)
+    {
         warn_archive(r, "extension-header-too-large", "%s is %llu bytes, over the %llu byte limit — reading the first %llu",
                      what, (unsigned long long)len, (unsigned long long)cap,
                      (unsigned long long)cap);
@@ -535,21 +563,26 @@ static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
      * reported verbatim. The skipping path is left exactly as it was: it is the
      * one every run takes.
      */
-    if (r->capture_raw) {
+    if (r->capture_raw)
+    {
         uint64_t done = 0;
 
         got = 0;
-        while (done < padded) {
+        while (done < padded)
+        {
             char     blk[TMD_BLOCK_SIZE];
             uint64_t at = tmd_source_offset(r->src);
             size_t   n = tmd_source_read(r->src, blk, sizeof(blk));
 
-            if (n != sizeof(blk)) {
+            if (n != sizeof(blk))
+            {
                 /* Short: keep whatever arrived of the wanted part. */
-                if (done < want) {
+                if (done < want)
+                {
                     size_t take = (size_t)(want - done);
 
-                    if (take > n) {
+                    if (take > n)
+                    {
                         take = n;
                     }
                     memcpy(buf + done, blk, take);
@@ -563,10 +596,12 @@ static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
                 return buf;
             }
             capture_block(r, '\0', blk, at);
-            if (done < want) {
+            if (done < want)
+            {
                 size_t take = (size_t)(want - done);
 
-                if (take > TMD_BLOCK_SIZE) {
+                if (take > TMD_BLOCK_SIZE)
+                {
                     take = TMD_BLOCK_SIZE;
                 }
                 memcpy(buf + done, blk, take);
@@ -583,14 +618,16 @@ static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
     buf[got] = '\0';
     *out_len = got;
 
-    if (got < want) {
+    if (got < want)
+    {
         warn_archive(r, "extension-header-truncated", "%s is truncated: wanted %llu bytes, got %zu",
                      what, (unsigned long long)want, got);
         return buf;
     }
     /* Step over whatever of the member we chose not to read, plus the padding
      * that brings it to a block boundary. */
-    if (padded > want) {
+    if (padded > want)
+    {
         (void)tmd_source_skip(r->src, padded - want);
     }
     return buf;
@@ -604,22 +641,26 @@ static enum tmd_format detect_format(const char block[TMD_BLOCK_SIZE])
 {
     const char *magic = block + F_MAGIC;
 
-    if (memcmp(magic, "ustar\0" "00", 8) == 0) {
+    if (memcmp(magic, "ustar\0" "00", 8) == 0)
+    {
         /* star signs its headers in the last four bytes of the block, which
          * ustar leaves as padding. */
-        if (memcmp(block + 508, "tar\0", 4) == 0) {
+        if (memcmp(block + 508, "tar\0", 4) == 0)
+        {
             return TMD_FMT_STAR;
         }
         return TMD_FMT_USTAR;
     }
-    if (memcmp(magic, "ustar  \0", 8) == 0) {
+    if (memcmp(magic, "ustar  \0", 8) == 0)
+    {
         return TMD_FMT_GNU;
     }
     /* Some writers put "ustar" in with a stray version. Treat a recognizable
      * magic as ustar rather than falling all the way back to v7, which would
      * throw away the uname, gname and prefix fields that are demonstrably
      * there. */
-    if (memcmp(magic, "ustar", 5) == 0) {
+    if (memcmp(magic, "ustar", 5) == 0)
+    {
         return TMD_FMT_USTAR;
     }
     return TMD_FMT_V7;
@@ -627,13 +668,15 @@ static enum tmd_format detect_format(const char block[TMD_BLOCK_SIZE])
 
 static void note_format(struct tmd_reader *r, enum tmd_format f)
 {
-    if (f <= TMD_FMT_PAX) {
+    if (f <= TMD_FMT_PAX)
+    {
         r->archive.formats[f] = true;
     }
     /* The archive's format is the most expressive one in it: a pax archive
      * full of plain ustar headers is still a pax archive, because a reader
      * that cannot parse pax gets the one member with a long path wrong. */
-    if (f > r->archive.format) {
+    if (f > r->archive.format)
+    {
         r->archive.format = f;
     }
 }
@@ -665,7 +708,8 @@ static void fill_raw(struct tmd_raw *raw, const char block[TMD_BLOCK_SIZE])
 /* The ustar path is prefix + '/' + name, and the '/' is not stored. */
 static char *join_prefix(const char *prefix, const char *name)
 {
-    if (prefix[0] == '\0') {
+    if (prefix[0] == '\0')
+    {
         return tmd_xstrdup(name);
     }
     return tmd_xasprintf("%s/%s", prefix, name);
@@ -677,10 +721,12 @@ static void parse_time_field(struct tmd_entry *e, struct tmd_time *t,
 {
     int64_t value;
 
-    if (tmd_field_empty(field, len)) {
+    if (tmd_field_empty(field, len))
+    {
         return;
     }
-    if (!tmd_parse_num_signed(field, len, &value)) {
+    if (!tmd_parse_num_signed(field, len, &value))
+    {
         warn_entry(e, "time-field-invalid", "%s field is not a valid number", what);
         return;
     }
@@ -703,39 +749,49 @@ static bool parse_pax_time(const char *s, struct tmd_time *t)
     int64_t     sec = 0;
     uint32_t    nsec = 0;
 
-    if (*p == '-') {
+    if (*p == '-')
+    {
         negative = true;
         p++;
-    } else if (*p == '+') {
+    } else if (*p == '+')
+    {
         p++;
     }
-    if (*p < '0' || *p > '9') {
+    if (*p < '0' || *p > '9')
+    {
         return false;
     }
-    while (*p >= '0' && *p <= '9') {
-        if (sec > (INT64_MAX - 9) / 10) {
+    while (*p >= '0' && *p <= '9')
+    {
+        if (sec > (INT64_MAX - 9) / 10)
+        {
             return false;
         }
         sec = sec * 10 + (*p - '0');
         p++;
     }
-    if (*p == '.') {
+    if (*p == '.')
+    {
         int digits = 0;
 
         p++;
-        while (*p >= '0' && *p <= '9') {
-            if (digits < 9) {
+        while (*p >= '0' && *p <= '9')
+        {
+            if (digits < 9)
+            {
                 nsec = nsec * 10 + (uint32_t)(*p - '0');
             }
             digits++;
             p++;
         }
-        while (digits < 9 && digits > 0) {
+        while (digits < 9 && digits > 0)
+        {
             nsec *= 10;
             digits++;
         }
     }
-    if (*p != '\0') {
+    if (*p != '\0')
+    {
         return false;
     }
 
@@ -749,11 +805,14 @@ static bool parse_pax_u64(const char *s, uint64_t *out)
 {
     uint64_t value = 0;
 
-    if (*s < '0' || *s > '9') {
+    if (*s < '0' || *s > '9')
+    {
         return false;
     }
-    for (; *s >= '0' && *s <= '9'; s++) {
-        if (value > (UINT64_MAX - 9) / 10) {
+    for (; *s >= '0' && *s <= '9'; s++)
+    {
+        if (value > (UINT64_MAX - 9) / 10)
+        {
             return false;
         }
         value = value * 10 + (uint64_t)(*s - '0');
@@ -766,10 +825,12 @@ static bool parse_pax_i64(const char *s, int64_t *out)
     bool     negative = (*s == '-');
     uint64_t magnitude;
 
-    if (negative || *s == '+') {
+    if (negative || *s == '+')
+    {
         s++;
     }
-    if (!parse_pax_u64(s, &magnitude) || magnitude > (uint64_t)INT64_MAX) {
+    if (!parse_pax_u64(s, &magnitude) || magnitude > (uint64_t)INT64_MAX)
+    {
         return false;
     }
     *out = negative ? -(int64_t)magnitude : (int64_t)magnitude;
@@ -782,7 +843,8 @@ static bool parse_pax_i64(const char *s, int64_t *out)
 
 static void sparse_add(struct tmd_entry *e, uint64_t offset, uint64_t numbytes)
 {
-    if (e->nsparse >= MAX_SPARSE_ENTRIES) {
+    if (e->nsparse >= MAX_SPARSE_ENTRIES)
+    {
         e->sparse_truncated = true;
         return;
     }
@@ -799,20 +861,24 @@ static void sparse_from_block(struct tmd_entry *e, const char *base,
 {
     size_t i;
 
-    for (i = 0; i < pairs; i++) {
+    for (i = 0; i < pairs; i++)
+    {
         const char *offset_field = base + i * 24;
         const char *bytes_field = offset_field + 12;
         uint64_t    offset, numbytes;
 
-        if (tmd_field_empty(offset_field, 12) && tmd_field_empty(bytes_field, 12)) {
+        if (tmd_field_empty(offset_field, 12) && tmd_field_empty(bytes_field, 12))
+        {
             continue;
         }
         if (!tmd_parse_num(offset_field, 12, &offset) ||
-            !tmd_parse_num(bytes_field, 12, &numbytes)) {
+            !tmd_parse_num(bytes_field, 12, &numbytes))
+        {
             warn_entry(e, "sparse-map-invalid-number", "sparse map entry %zu is not a valid number", e->nsparse);
             return;
         }
-        if (offset == 0 && numbytes == 0) {
+        if (offset == 0 && numbytes == 0)
+        {
             continue;
         }
         sparse_add(e, offset, numbytes);
@@ -824,19 +890,23 @@ static void read_sparse_extensions(struct tmd_reader *r, struct tmd_entry *e)
 {
     unsigned guard = 0;
 
-    for (;;) {
+    for (;;)
+    {
         char   block[TMD_BLOCK_SIZE];
         size_t got;
 
-        if (!read_block(r, block, &got)) {
+        if (!read_block(r, block, &got))
+        {
             warn_entry(e, "sparse-map-truncated", "sparse map is truncated");
             return;
         }
         sparse_from_block(e, block, SPARSE_EXT_COUNT);
-        if (block[SPARSE_EXT_ISEXT] == '\0') {
+        if (block[SPARSE_EXT_ISEXT] == '\0')
+        {
             return;
         }
-        if (++guard > MAX_SPARSE_MAP_BLOCKS) {
+        if (++guard > MAX_SPARSE_MAP_BLOCKS)
+        {
             e->sparse_truncated = true;
             warn_entry(e, "sparse-map-too-long", "sparse map exceeds %u blocks — not reading further",
                        MAX_SPARSE_MAP_BLOCKS);
@@ -865,17 +935,20 @@ static uint64_t read_pax_sparse_map_1_0(struct tmd_reader *r,
 
     tmd_buf_init(&text);
 
-    for (;;) {
+    for (;;)
+    {
         char        block[TMD_BLOCK_SIZE];
         size_t      got;
         const char *p;
 
-        if (consumed >= avail || blocks >= MAX_SPARSE_MAP_BLOCKS) {
+        if (consumed >= avail || blocks >= MAX_SPARSE_MAP_BLOCKS)
+        {
             warn_entry(e, "sparse-map-unterminated", "sparse map did not end within the member");
             e->sparse_truncated = true;
             break;
         }
-        if (!read_block(r, block, &got)) {
+        if (!read_block(r, block, &got))
+        {
             warn_entry(e, "sparse-map-truncated", "sparse map is truncated");
             break;
         }
@@ -885,13 +958,16 @@ static uint64_t read_pax_sparse_map_1_0(struct tmd_reader *r,
 
         /* Consume whole "<number>\n" lines out of whatever has arrived. */
         p = text.data;
-        for (;;) {
+        for (;;)
+        {
             size_t   start = pos;
             uint64_t value = 0;
             bool     digits = false;
 
-            while (pos < text.len && p[pos] >= '0' && p[pos] <= '9') {
-                if (value > (UINT64_MAX - 9) / 10) {
+            while (pos < text.len && p[pos] >= '0' && p[pos] <= '9')
+            {
+                if (value > (UINT64_MAX - 9) / 10)
+                {
                     warn_entry(e, "sparse-map-number-overflow", "sparse map number overflows");
                     goto done;
                 }
@@ -899,34 +975,42 @@ static uint64_t read_pax_sparse_map_1_0(struct tmd_reader *r,
                 digits = true;
                 pos++;
             }
-            if (pos >= text.len || p[pos] != '\n') {
+            if (pos >= text.len || p[pos] != '\n')
+            {
                 pos = start; /* an incomplete line — wait for the next block */
                 break;
             }
             pos++;
-            if (!digits) {
+            if (!digits)
+            {
                 warn_entry(e, "sparse-map-empty-field", "sparse map has an empty field");
                 goto done;
             }
-            if (!counted) {
+            if (!counted)
+            {
                 expected = value;
                 counted = true;
-                if (expected > MAX_SPARSE_ENTRIES) {
+                if (expected > MAX_SPARSE_ENTRIES)
+                {
                     warn_entry(e, "sparse-map-too-many-entries", "sparse map claims %llu entries — not reading it",
                                (unsigned long long)expected);
                     e->sparse_truncated = true;
                     goto done;
                 }
-            } else if (have % 2 == 0) {
+            } else if (have % 2 == 0)
+            {
                 sparse_add(e, value, 0);
                 have++;
-            } else {
-                if (e->nsparse > 0) {
+            } else
+            {
+                if (e->nsparse > 0)
+                {
                     e->sparse[e->nsparse - 1].numbytes = value;
                 }
                 have++;
             }
-            if (counted && have >= expected * 2) {
+            if (counted && have >= expected * 2)
+            {
                 goto done;
             }
         }
@@ -942,30 +1026,36 @@ static void sparse_from_pax_map(struct tmd_entry *e, const char *map)
 {
     const char *p = map;
 
-    while (*p) {
+    while (*p)
+    {
         uint64_t offset = 0, numbytes = 0;
         bool     digits = false;
 
-        while (*p >= '0' && *p <= '9') {
+        while (*p >= '0' && *p <= '9')
+        {
             offset = offset * 10 + (uint64_t)(*p++ - '0');
             digits = true;
         }
-        if (!digits || *p != ',') {
+        if (!digits || *p != ',')
+        {
             warn_entry(e, "gnu-sparse-map-malformed", "GNU.sparse.map is malformed");
             return;
         }
         p++;
         digits = false;
-        while (*p >= '0' && *p <= '9') {
+        while (*p >= '0' && *p <= '9')
+        {
             numbytes = numbytes * 10 + (uint64_t)(*p++ - '0');
             digits = true;
         }
-        if (!digits) {
+        if (!digits)
+        {
             warn_entry(e, "gnu-sparse-map-malformed", "GNU.sparse.map is malformed");
             return;
         }
         sparse_add(e, offset, numbytes);
-        if (*p == ',') {
+        if (*p == ',')
+        {
             p++;
         }
     }
@@ -980,66 +1070,81 @@ static void apply_pax(struct tmd_reader *r, struct tmd_entry *e)
     const char *v;
 
     v = kv_get(e->pax, e->npax, "path");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         free(e->path);
         e->path = tmd_xstrdup(v);
         e->path_source = "pax path";
     }
     v = kv_get(e->pax, e->npax, "linkpath");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         free(e->linkpath);
         e->linkpath = tmd_xstrdup(v);
         e->linkpath_source = "pax linkpath";
     }
     v = kv_get(e->pax, e->npax, "size");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         uint64_t size;
-        if (parse_pax_u64(v, &size)) {
+        if (parse_pax_u64(v, &size))
+        {
             e->size = size;
-        } else {
+        } else
+        {
             warn_entry(e, "pax-size-invalid", "pax size \"%s\" is not a number", v);
         }
     }
     v = kv_get(e->pax, e->npax, "uid");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         int64_t uid;
-        if (parse_pax_i64(v, &uid)) {
+        if (parse_pax_i64(v, &uid))
+        {
             e->uid = uid;
         }
     }
     v = kv_get(e->pax, e->npax, "gid");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         int64_t gid;
-        if (parse_pax_i64(v, &gid)) {
+        if (parse_pax_i64(v, &gid))
+        {
             e->gid = gid;
         }
     }
     v = kv_get(e->pax, e->npax, "uname");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         free(e->uname);
         e->uname = tmd_xstrdup(v);
     }
     v = kv_get(e->pax, e->npax, "gname");
-    if (v != NULL) {
+    if (v != NULL)
+    {
         free(e->gname);
         e->gname = tmd_xstrdup(v);
     }
     v = kv_get(e->pax, e->npax, "mtime");
-    if (v != NULL && parse_pax_time(v, &e->mtime)) {
+    if (v != NULL && parse_pax_time(v, &e->mtime))
+    {
         e->mtime.source = "pax mtime";
     }
     v = kv_get(e->pax, e->npax, "atime");
-    if (v != NULL && parse_pax_time(v, &e->atime)) {
+    if (v != NULL && parse_pax_time(v, &e->atime))
+    {
         e->atime.source = "pax atime";
     }
     /* star and GNU disagree about which key carries the inode change time;
      * both are accepted, with the POSIX spelling winning when both appear. */
     v = kv_get(e->pax, e->npax, "SCHILY.ctime");
-    if (v != NULL && parse_pax_time(v, &e->ctime)) {
+    if (v != NULL && parse_pax_time(v, &e->ctime))
+    {
         e->ctime.source = "pax SCHILY.ctime";
     }
     v = kv_get(e->pax, e->npax, "ctime");
-    if (v != NULL && parse_pax_time(v, &e->ctime)) {
+    if (v != NULL && parse_pax_time(v, &e->ctime))
+    {
         e->ctime.source = "pax ctime";
     }
     /*
@@ -1049,7 +1154,8 @@ static void apply_pax(struct tmd_reader *r, struct tmd_entry *e)
      * field no writer produces.
      */
     v = kv_get(e->pax, e->npax, "LIBARCHIVE.creationtime");
-    if (v != NULL && parse_pax_time(v, &e->created)) {
+    if (v != NULL && parse_pax_time(v, &e->created))
+    {
         e->created.source = "pax LIBARCHIVE.creationtime";
     }
     /*
@@ -1062,18 +1168,23 @@ static void apply_pax(struct tmd_reader *r, struct tmd_entry *e)
      * itself as GNU tar. What is left is genuinely distinguishing, and the
      * summary still labels the whole line as an inference.
      */
-    for (size_t i = 0; i < e->npax; i++) {
+    for (size_t i = 0; i < e->npax; i++)
+    {
         const char *key = e->pax[i].key;
 
-        if (r->archive.writer) {
+        if (r->archive.writer)
+        {
             break;
         }
-        if (strncmp(key, "LIBARCHIVE.", 11) == 0) {
+        if (strncmp(key, "LIBARCHIVE.", 11) == 0)
+        {
             r->archive.writer = "libarchive (bsdtar)";
-        } else if (strncmp(key, "SCHILY.", 7) == 0) {
+        } else if (strncmp(key, "SCHILY.", 7) == 0)
+        {
             r->archive.writer = "star or libarchive";
         } else if (strncmp(key, "GNU.", 4) == 0 &&
-                 strncmp(key, "GNU.sparse.", 11) != 0) {
+                 strncmp(key, "GNU.sparse.", 11) != 0)
+        {
             r->archive.writer = "GNU tar";
                  }
     }
@@ -1099,22 +1210,27 @@ static void consume_trailer(struct tmd_reader *r)
     char     block[TMD_BLOCK_SIZE];
     uint64_t total_blocks;
 
-    for (;;) {
+    for (;;)
+    {
         size_t got = tmd_source_read(r->src, block, TMD_BLOCK_SIZE);
-        if (got == 0) {
+        if (got == 0)
+        {
             break;
         }
         r->archive.trailing_bytes += got;
         if (!block_is_zero(block) ||
-            (got < TMD_BLOCK_SIZE && !tmd_field_empty(block, got))) {
+            (got < TMD_BLOCK_SIZE && !tmd_field_empty(block, got)))
+        {
             r->archive.trailing_garbage = true;
             }
-        if (got < TMD_BLOCK_SIZE) {
+        if (got < TMD_BLOCK_SIZE)
+        {
             break;
         }
     }
 
-    if (r->archive.trailing_garbage) {
+    if (r->archive.trailing_garbage)
+    {
         warn_archive(r, "data-after-end-marker", "%llu bytes of non-zero data follow the end-of-archive marker "
                         "(a second archive appended, or damage)",
                      (unsigned long long)r->archive.trailing_bytes);
@@ -1130,7 +1246,8 @@ static void consume_trailer(struct tmd_reader *r)
      * which is why nothing downstream depends on it.
      */
     total_blocks = tmd_source_offset(r->src) / TMD_BLOCK_SIZE;
-    if (total_blocks > 0) {
+    if (total_blocks > 0)
+    {
         /* Only the two factors a standard tool actually uses. Trying more of
          * them finds a "factor" for every archive, including the ones that
          * were never padded to a record at all: a 24-block bsdtar archive is
@@ -1138,8 +1255,10 @@ static void consume_trailer(struct tmd_reader *r)
          * invented to fill the field. Nothing is reported when neither fits. */
         static const unsigned factors[] = { 20, 10 };
         size_t i;
-        for (i = 0; i < sizeof(factors) / sizeof(factors[0]); i++) {
-            if (total_blocks % factors[i] == 0) {
+        for (i = 0; i < sizeof(factors) / sizeof(factors[0]); i++)
+        {
+            if (total_blocks % factors[i] == 0)
+            {
                 r->archive.record_blocks = factors[i];
                 break;
             }
@@ -1153,6 +1272,7 @@ struct tmd_reader *tmd_reader_new(struct tmd_source *src)
 
     r->src = src;
     r->archive.name = tmd_xstrdup(tmd_source_name(src));
+    r->archive.codec = tmd_source_codec(src);
     r->archive.file_size = tmd_source_size(src);
     /* An archive with nothing out of order is in order, so this starts true and
      * is only ever cleared. An empty archive is trivially sorted. */
@@ -1175,7 +1295,8 @@ void tmd_reader_free(struct tmd_reader *r)
 {
     size_t i;
 
-    if (!r) {
+    if (!r)
+    {
         return;
     }
     entry_reset(&r->entry);
@@ -1183,10 +1304,12 @@ void tmd_reader_free(struct tmd_reader *r)
     free(r->pending_linkname);
     kv_free(r->pending_pax, r->pending_npax);
     kv_free(r->archive.pax_global, r->archive.npax_global);
-    for (i = 0; i < r->archive.features.npax_keys; i++) {
+    for (i = 0; i < r->archive.features.npax_keys; i++)
+    {
         free(r->archive.features.pax_keys[i]);
     }
-    for (i = 0; i < r->archive.nwarnings; i++) {
+    for (i = 0; i < r->archive.nwarnings; i++)
+    {
         free(r->archive.warnings[i].text);
     }
     free(r->archive.warnings);
@@ -1215,46 +1338,6 @@ static int fail(struct tmd_reader *r, const char *fmt, ...)
     return -1;
 }
 
-struct wrapper {
-    const char *magic;      /* the bytes, as a literal */
-    size_t      magic_len;
-    const char *name;
-    const char *unpack;     /* the command that gets a tar stream out of it */
-};
-
-static const struct wrapper wrappers[] = {
-    { "\x1f\x8b",             2, "gzip",         "gzip -dc"  },
-    { "BZh",                   3, "bzip2",        "bzip2 -dc" },
-    { "\xfd" "7zXZ\x00",       6, "xz",           "xz -dc"    },
-    { "\x28\xb5\x2f\xfd",      4, "zstd",         "zstd -dc"  },
-    { "\x04\x22\x4d\x18",      4, "lz4",          "lz4 -dc"   },
-    { "LZIP",                  4, "lzip",         "lzip -dc"  },
-    { "\x1f\x9d",             2, "compress",     "zcat"      },
-    /* Not compression, but the same mistake: a container that is not tar and
-     * is routinely confused with one. There is no pipe that helps, so the
-     * message for these says only what the file is. */
-    { "PK\x03\x04",            4, "zip",          NULL        },
-    { "070701",                6, "cpio (newc)",  NULL        },
-    { "070707",                6, "cpio (odc)",   NULL        },
-    { "!<arch>\n",             8, "ar",           NULL        },
-    { "\xed\xab\xee\xdb",      4, "RPM",          NULL        },
-    { "SQLite format 3",      14, "SQLite",       NULL        },
-    { "\x7f" "ELF",             4, "ELF",          NULL        }
-};
-
-static const struct wrapper *compression_hint(const char block[TMD_BLOCK_SIZE],
-                                              size_t len)
-{
-    size_t i;
-
-    for (i = 0; i < sizeof(wrappers) / sizeof(wrappers[0]); i++) {
-        if (len >= wrappers[i].magic_len &&
-            memcmp(block, wrappers[i].magic, wrappers[i].magic_len) == 0) {
-            return &wrappers[i];
-            }
-    }
-    return NULL;
-}
 
 /*
  * The diagnostic for a file that is plainly not a tar archive.
@@ -1269,17 +1352,29 @@ static const struct wrapper *compression_hint(const char block[TMD_BLOCK_SIZE],
 static int fail_not_tar(struct tmd_reader *r, const char block[TMD_BLOCK_SIZE],
                         size_t len)
 {
-    const struct wrapper *w = compression_hint(block, len);
+    /*
+     * The table lives in source.c, which is where a compressed file is now
+     * decompressed on the way in. So this branch is reached only when the
+     * decompression did not happen or did not help: a wrapper inside a wrapper,
+     * or a container that is not tar at all.
+     */
+    const struct wrapper *w = tmd_wrapper_lookup(block, len);
+    const char           *tool = tmd_wrapper_command(w);
 
-    if (w && w->unpack) {
+    if (w && tool)
+    {
         return fail(r, "%s: %s-compressed data, not a plain tar archive "
-                       "(try: %s %s | tmd -f -)",
-                    r->archive.name, w->name, w->unpack, r->archive.name);
+                       "(try: %s -dc %s | tmd -f -)",
+                    r->archive.name, tmd_wrapper_name(w), tool,
+                    r->archive.name);
     }
-    if (w) {
-        return fail(r, "%s: %s data, not a tar archive", r->archive.name, w->name);
+    if (w)
+    {
+        return fail(r, "%s: %s data, not a tar archive", r->archive.name,
+                    tmd_wrapper_name(w));
     }
-    if (len < TMD_BLOCK_SIZE) {
+    if (len < TMD_BLOCK_SIZE)
+    {
         return fail(r, "%s: only %zu bytes long — too short to be a tar archive",
                     r->archive.name, len);
     }
@@ -1300,7 +1395,8 @@ static int fail_not_tar(struct tmd_reader *r, const char block[TMD_BLOCK_SIZE],
 static int end_of_archive(struct tmd_reader *r)
 {
     r->finished = true;
-    if (r->archive.file_size == 0) {
+    if (r->archive.file_size == 0)
+    {
         r->archive.file_size = tmd_source_offset(r->src);
     }
     return 0;
@@ -1337,31 +1433,37 @@ struct tmd_entry *tmd_entry_clone(const struct tmd_entry *e)
     c->gname = dup_or_null(e->gname);
 
     c->ext_blocks = NULL;
-    if (e->n_ext_blocks > 0) {
+    if (e->n_ext_blocks > 0)
+    {
         c->ext_blocks = tmd_xmalloc(e->n_ext_blocks * sizeof(*c->ext_blocks));
         memcpy(c->ext_blocks, e->ext_blocks,
                e->n_ext_blocks * sizeof(*c->ext_blocks));
     }
 
     c->sparse = NULL;
-    if (e->nsparse > 0) {
+    if (e->nsparse > 0)
+    {
         c->sparse = tmd_xmalloc(e->nsparse * sizeof(*c->sparse));
         memcpy(c->sparse, e->sparse, e->nsparse * sizeof(*c->sparse));
     }
 
     c->pax = NULL;
-    if (e->npax > 0) {
+    if (e->npax > 0)
+    {
         c->pax = tmd_xcalloc(e->npax, sizeof(*c->pax));
-        for (i = 0; i < e->npax; i++) {
+        for (i = 0; i < e->npax; i++)
+        {
             c->pax[i].key = dup_or_null(e->pax[i].key);
             c->pax[i].value = dup_or_null(e->pax[i].value);
         }
     }
 
     c->warnings = NULL;
-    if (e->nwarnings > 0) {
+    if (e->nwarnings > 0)
+    {
         c->warnings = tmd_xcalloc(e->nwarnings, sizeof(*c->warnings));
-        for (i = 0; i < e->nwarnings; i++) {
+        for (i = 0; i < e->nwarnings; i++)
+        {
             c->warnings[i].code = e->warnings[i].code; /* a literal; shared */
             c->warnings[i].text = dup_or_null(e->warnings[i].text);
         }
@@ -1371,7 +1473,8 @@ struct tmd_entry *tmd_entry_clone(const struct tmd_entry *e)
 
 void tmd_entry_free(struct tmd_entry *e)
 {
-    if (!e) {
+    if (!e)
+    {
         return;
     }
     /* entry_reset frees exactly the fields the clone allocated, which is what
@@ -1396,11 +1499,13 @@ static void note_order(struct tmd_reader *r, const struct tmd_entry *e)
     size_t               i;
     char                 root[64];
 
-    if (!e->path || !e->path[0]) {
+    if (!e->path || !e->path[0])
+    {
         return;
     }
 
-    if (r->prev_path && strcmp(r->prev_path, e->path) > 0) {
+    if (r->prev_path && strcmp(r->prev_path, e->path) > 0)
+    {
         f->order_sorted = false;
     }
     free(r->prev_path);
@@ -1410,24 +1515,30 @@ static void note_order(struct tmd_reader *r, const struct tmd_entry *e)
      * matters is how many things appear in the directory you extract into. */
     slash = strchr(e->path, '/');
     len = slash ? (size_t)(slash - e->path) : strlen(e->path);
-    if (len == 0) {
+    if (len == 0)
+    {
         return; /* an absolute path; reported as an escape, not as a root */
     }
-    if (len >= sizeof(root)) {
+    if (len >= sizeof(root))
+    {
         len = sizeof(root) - 1;
     }
     memcpy(root, e->path, len);
     root[len] = '\0';
 
-    for (i = 0; i < f->nroots; i++) {
-        if (strcmp(f->roots[i], root) == 0) {
+    for (i = 0; i < f->nroots; i++)
+    {
+        if (strcmp(f->roots[i], root) == 0)
+        {
             return;
         }
     }
-    if (f->nroots < sizeof(f->roots) / sizeof(f->roots[0])) {
+    if (f->nroots < sizeof(f->roots) / sizeof(f->roots[0]))
+    {
         memcpy(f->roots[f->nroots], root, len + 1);
         f->nroots++;
-    } else {
+    } else
+    {
         f->roots_truncated = true;
     }
 }
@@ -1438,14 +1549,16 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
     size_t   got;
     unsigned extension_guard = 0;
 
-    if (r->finished) {
+    if (r->finished)
+    {
         return 0;
     }
 
     entry_reset(&r->entry);
     r->member_start = tmd_source_offset(r->src);
 
-    for (;;) {
+    for (;;)
+    {
         struct tmd_entry *e = &r->entry;
         enum tmd_format   format;
         uint64_t          payload_consumed = 0;
@@ -1455,27 +1568,34 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
 
         /* A pathological archive could be nothing but extension headers; each
          * iteration that does not produce an entry is counted. */
-        if (++extension_guard > 1000) {
+        if (++extension_guard > 1000)
+        {
             warn_archive(r, "too-many-extension-headers", "over 1000 extension headers for one member — giving up on it");
             return end_of_archive(r);
         }
 
-        if (!read_block(r, block, &got)) {
-            if (got == 0) {
-                if (tmd_source_error(r->src)) {
+        if (!read_block(r, block, &got))
+        {
+            if (got == 0)
+            {
+                if (tmd_source_error(r->src))
+                {
                     return fail(r, "%s: read error", r->archive.name);
                 }
-                if (!r->saw_any_header) {
+                if (!r->saw_any_header)
+                {
                     return fail(r, "%s: empty file, not a tar archive",
                                 r->archive.name);
                 }
                 warn_archive(r, "missing-end-marker", "archive ends without the two-block end-of-archive marker");
-            } else if (!r->saw_any_header) {
+            } else if (!r->saw_any_header)
+            {
                 /* A first block that is too short to be a header is not a
                  * truncated archive; nothing ever established that this was an
                  * archive at all. */
                 return fail_not_tar(r, block, got);
-            } else {
+            } else
+            {
                 warn_archive(r, "truncated-header",
                              "archive ends mid-header: %zu of %d bytes at offset %llu",
                              got, TMD_BLOCK_SIZE,
@@ -1485,11 +1605,13 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         }
 
         /* --- end of archive -------------------------------------------- */
-        if (block_is_zero(block)) {
+        if (block_is_zero(block))
+        {
             char   second[TMD_BLOCK_SIZE];
             size_t second_got;
 
-            if (!read_block(r, second, &second_got) || !block_is_zero(second)) {
+            if (!read_block(r, second, &second_got) || !block_is_zero(second))
+            {
                 /*
                  * One zero block is not an end marker. GNU tar skips it and
                  * keeps reading, which is what makes archives concatenated by
@@ -1501,12 +1623,14 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                              (unsigned long long)(tmd_source_offset(r->src) -
                                                   (uint64_t)TMD_BLOCK_SIZE -
                                                   (uint64_t)second_got));
-                if (second_got == 0) {
+                if (second_got == 0)
+                {
                     return end_of_archive(r);
                 }
                 memcpy(block, second, TMD_BLOCK_SIZE);
                 /* Fall through and read this block as a header. */
-            } else {
+            } else
+            {
                 r->archive.eof_marker = true;
                 consume_trailer(r);
                 return end_of_archive(r);
@@ -1524,8 +1648,10 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                            ((value == e->chksum_unsigned) ||
                             ((int64_t)value == (int64_t)e->chksum_signed));
 
-            if (!e->chksum_ok) {
-                if (!r->saw_any_header) {
+            if (!e->chksum_ok)
+            {
+                if (!r->saw_any_header)
+                {
                     return fail_not_tar(r, block, TMD_BLOCK_SIZE);
                 }
                 r->archive.bad_checksums++;
@@ -1540,12 +1666,14 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                  * editor. */
                 uint64_t at = tmd_source_offset(r->src) - (uint64_t)TMD_BLOCK_SIZE;
 
-                if (readable) {
+                if (readable)
+                {
                     warn_entry(e, "checksum-mismatch", "header checksum mismatch at offset %llu: field says %u, "
                                   "block sums to %u (unsigned) / %d (signed)",
                                (unsigned long long)at,
                                e->chksum_stored, e->chksum_unsigned, e->chksum_signed);
-                } else {
+                } else
+                {
                     warn_entry(e, "checksum-field-invalid", "header checksum field at offset %llu is not octal; "
                                   "block sums to %u",
                                (unsigned long long)at, e->chksum_unsigned);
@@ -1563,21 +1691,26 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         e->offset = r->member_start;
 
         if (is_base256(block + F_SIZE) || is_base256(block + F_UID) ||
-            is_base256(block + F_GID) || is_base256(block + F_MTIME)) {
+            is_base256(block + F_GID) || is_base256(block + F_MTIME))
+        {
             r->archive.features.base256_fields++;
             }
 
-        if (tmd_parse_num(block + F_SIZE, 12, &value)) {
+        if (tmd_parse_num(block + F_SIZE, 12, &value))
+        {
             e->data_size = value;
-        } else if (!tmd_field_empty(block + F_SIZE, 12)) {
+        } else if (!tmd_field_empty(block + F_SIZE, 12))
+        {
             warn_entry(e, "size-field-invalid", "size field is not a valid number");
         }
         e->size = e->data_size;
 
         /* --- extension headers ------------------------------------------ */
-        switch (e->typeflag) {
+        switch (e->typeflag)
+        {
         case 'L':
-        case 'K': {
+        case 'K':
+        {
             size_t len;
 
             /* Nothing has been read since this header block, so the source is
@@ -1590,11 +1723,13 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                                                           : "GNU long link name");
             /* The stored name includes its own terminating NUL in the size,
              * and tmd_xstrndup stops at the first one either way. */
-            if (e->typeflag == 'L') {
+            if (e->typeflag == 'L')
+            {
                 free(r->pending_name);
                 r->pending_name = tmd_xstrndup(text, len);
                 r->archive.features.gnu_longname++;
-            } else {
+            } else
+            {
                 free(r->pending_linkname);
                 r->pending_linkname = tmd_xstrndup(text, len);
                 r->archive.features.gnu_longlink++;
@@ -1604,7 +1739,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             continue;
         }
         case 'x':
-        case 'g': {
+        case 'g':
+        {
             size_t len;
 
             capture_block(r, e->typeflag, block,
@@ -1623,10 +1759,13 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
              * carries at all: the attribute keys in one are just "path" and
              * "mtime", which everybody writes.
              */
-            if (!r->archive.writer) {
-                if (strstr(name_field, "PaxHeaders/") != NULL) {
+            if (!r->archive.writer)
+            {
+                if (strstr(name_field, "PaxHeaders/") != NULL)
+                {
                     r->archive.writer = "GNU tar";
-                } else if (strstr(name_field, "PaxHeader/") != NULL) {
+                } else if (strstr(name_field, "PaxHeader/") != NULL)
+                {
                     r->archive.writer = "libarchive (bsdtar)";
                 }
             }
@@ -1634,10 +1773,12 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             char  *text = read_payload(r, e->data_size, MAX_PAX, &len,
                                        e->typeflag == 'x' ? "pax extended header"
                                                           : "pax global header");
-            if (e->typeflag == 'x') {
+            if (e->typeflag == 'x')
+            {
                 parse_pax(r, text, len, &r->pending_pax, &r->pending_npax, false);
                 r->archive.features.pax_headers++;
-            } else {
+            } else
+            {
                 r->archive.features.pax_globals++;
                 parse_pax(r, text, len, &r->archive.pax_global,
                           &r->archive.npax_global, true);
@@ -1652,32 +1793,38 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
 
         note_format(r, format);
         e->format = format;
-        if (r->pending_npax > 0 || r->archive.npax_global > 0) {
+        if (r->pending_npax > 0 || r->archive.npax_global > 0)
+        {
             e->format = TMD_FMT_PAX;
         }
 
         /* --- the path --------------------------------------------------- */
         if (format == TMD_FMT_USTAR || format == TMD_FMT_STAR ||
-            format == TMD_FMT_PAX) {
+            format == TMD_FMT_PAX)
+        {
             e->path = join_prefix(prefix_field, name_field);
             e->path_source = prefix_field[0] ? "prefix+name" : "name";
-            if (prefix_field[0]) {
+            if (prefix_field[0])
+            {
                 r->archive.features.prefix_used++;
             }
-        } else {
+        } else
+        {
             e->path = tmd_xstrdup(name_field);
             e->path_source = "name";
         }
         e->linkpath = tmd_xstrdup(e->raw.linkname);
         e->linkpath_source = "linkname";
 
-        if (r->pending_name) {
+        if (r->pending_name)
+        {
             free(e->path);
             e->path = r->pending_name;
             r->pending_name = NULL;
             e->path_source = "GNU long name";
         }
-        if (r->pending_linkname) {
+        if (r->pending_linkname)
+        {
             free(e->linkpath);
             e->linkpath = r->pending_linkname;
             r->pending_linkname = NULL;
@@ -1685,82 +1832,100 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         }
 
         /* --- the numeric fields ----------------------------------------- */
-        if (tmd_parse_num(block + F_MODE, 8, &value)) {
+        if (tmd_parse_num(block + F_MODE, 8, &value))
+        {
             e->mode = (uint32_t)(value & 07777);
-        } else if (!tmd_field_empty(block + F_MODE, 8)) {
+        } else if (!tmd_field_empty(block + F_MODE, 8))
+        {
             warn_entry(e, "mode-field-invalid", "mode field is not a valid number");
         }
 
         if (!tmd_parse_num_signed(block + F_UID, 8, &e->uid) &&
-            !tmd_field_empty(block + F_UID, 8)) {
+            !tmd_field_empty(block + F_UID, 8))
+        {
             warn_entry(e, "uid-field-invalid", "uid field is not a valid number");
             }
         if (!tmd_parse_num_signed(block + F_GID, 8, &e->gid) &&
-            !tmd_field_empty(block + F_GID, 8)) {
+            !tmd_field_empty(block + F_GID, 8))
+        {
             warn_entry(e, "gid-field-invalid", "gid field is not a valid number");
             }
 
         parse_time_field(e, &e->mtime, block + F_MTIME, 12, "mtime", "header");
 
-        if (format == TMD_FMT_GNU) {
+        if (format == TMD_FMT_GNU)
+        {
             parse_time_field(e, &e->atime, block + F_GNU_ATIME, 12, "atime",
                              "GNU tail");
             parse_time_field(e, &e->ctime, block + F_GNU_CTIME, 12, "ctime",
                              "GNU tail");
         }
 
-        if (format != TMD_FMT_V7) {
+        if (format != TMD_FMT_V7)
+        {
             e->uname = tmd_xstrdup(e->raw.uname);
             e->gname = tmd_xstrdup(e->raw.gname);
-        } else {
+        } else
+        {
             e->uname = tmd_xstrdup("");
             e->gname = tmd_xstrdup("");
         }
 
         e->kind = tmd_kind_of(e->typeflag, e->path);
-        if (e->kind == TMD_KIND_CHARDEV || e->kind == TMD_KIND_BLOCKDEV) {
+        if (e->kind == TMD_KIND_CHARDEV || e->kind == TMD_KIND_BLOCKDEV)
+        {
             uint64_t major = 0, minor = 0;
             if (tmd_parse_num(block + F_DEVMAJOR, 8, &major) &&
-                tmd_parse_num(block + F_DEVMINOR, 8, &minor)) {
+                tmd_parse_num(block + F_DEVMINOR, 8, &minor))
+            {
                 e->has_dev = true;
                 e->devmajor = (uint32_t)major;
                 e->devminor = (uint32_t)minor;
-            } else {
+            } else
+            {
                 warn_entry(e, "device-field-invalid", "device numbers are missing or not octal");
             }
         }
 
-        if (e->kind == TMD_KIND_UNKNOWN) {
+        if (e->kind == TMD_KIND_UNKNOWN)
+        {
             warn_entry(e, "unknown-typeflag", "unrecognized typeflag '%c' (0x%02x)",
                        (e->typeflag >= 32 && e->typeflag < 127) ? e->typeflag : '?',
                        (unsigned char)e->typeflag);
         }
 
         /* --- sparse ------------------------------------------------------ */
-        if (e->typeflag == 'S' && format == TMD_FMT_GNU) {
+        if (e->typeflag == 'S' && format == TMD_FMT_GNU)
+        {
             e->is_sparse = true;
             sparse_from_block(e, block + F_GNU_SPARSE, 4);
-            if (tmd_parse_num(block + F_GNU_REALSIZE, 12, &value)) {
+            if (tmd_parse_num(block + F_GNU_REALSIZE, 12, &value))
+            {
                 e->realsize = value;
             }
-            if (block[F_GNU_ISEXT] != '\0') {
+            if (block[F_GNU_ISEXT] != '\0')
+            {
                 read_sparse_extensions(r, e);
             }
             e->size = e->realsize ? e->realsize : e->data_size;
         }
 
         /* --- pax attributes, local over global --------------------------- */
-        if (r->archive.npax_global > 0) {
+        if (r->archive.npax_global > 0)
+        {
             size_t i;
-            for (i = 0; i < r->archive.npax_global; i++) {
+            for (i = 0; i < r->archive.npax_global; i++)
+            {
                 kv_add(&e->pax, &e->npax, r->archive.pax_global[i].key,
                        r->archive.pax_global[i].value,
                        strlen(r->archive.pax_global[i].value));
             }
         }
-        if (r->pending_npax > 0) {
+        if (r->pending_npax > 0)
+        {
             size_t i;
-            for (i = 0; i < r->pending_npax; i++) {
+            for (i = 0; i < r->pending_npax; i++)
+            {
                 kv_add(&e->pax, &e->npax, r->pending_pax[i].key,
                        r->pending_pax[i].value, strlen(r->pending_pax[i].value));
             }
@@ -1768,7 +1933,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             r->pending_pax = NULL;
             r->pending_npax = 0;
         }
-        if (e->npax > 0) {
+        if (e->npax > 0)
+        {
             apply_pax(r, e);
         }
 
@@ -1781,30 +1947,37 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             const char *size_v1 = kv_get(e->pax, e->npax, "GNU.sparse.size");
             const char *name = kv_get(e->pax, e->npax, "GNU.sparse.name");
 
-            if (major || minor || map || realsize || size_v1) {
+            if (major || minor || map || realsize || size_v1)
+            {
                 e->is_sparse = true;
-                if (realsize) {
+                if (realsize)
+                {
                     (void)parse_pax_u64(realsize, &e->realsize);
-                } else if (size_v1) {
+                } else if (size_v1)
+                {
                     (void)parse_pax_u64(size_v1, &e->realsize);
                 }
-                if (name) {
+                if (name)
+                {
                     /* Format 0.x hides the real name here and puts a dummy in
                      * the header, so the header name is not the file's name. */
                     free(e->path);
                     e->path = tmd_xstrdup(name);
                     e->path_source = "GNU.sparse.name";
                 }
-                if (map) {
+                if (map)
+                {
                     sparse_from_pax_map(e, map);
                 }
-                if (e->realsize) {
+                if (e->realsize)
+                {
                     e->size = e->realsize;
                 }
             }
 
             if (major && minor && strcmp(major, "1") == 0 &&
-                strcmp(minor, "0") == 0) {
+                strcmp(minor, "0") == 0)
+            {
                 uint64_t used = read_pax_sparse_map_1_0(r, e, e->data_size);
                 /* The map came out of the payload, so that much less of it is
                  * left to step over. */
@@ -1816,9 +1989,11 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         {
             uint64_t payload = tmd_round_up_blocks(e->data_size);
 
-            if (payload > payload_consumed) {
+            if (payload > payload_consumed)
+            {
                 payload -= payload_consumed;
-            } else {
+            } else
+            {
                 payload = 0;
             }
 
@@ -1827,8 +2002,10 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
              * skipping that many bytes would eat the next header. */
             if (e->kind == TMD_KIND_DIR || e->kind == TMD_KIND_SYMLINK ||
                 e->kind == TMD_KIND_HARDLINK || e->kind == TMD_KIND_CHARDEV ||
-                e->kind == TMD_KIND_BLOCKDEV || e->kind == TMD_KIND_FIFO) {
-                if (e->data_size != 0) {
+                e->kind == TMD_KIND_BLOCKDEV || e->kind == TMD_KIND_FIFO)
+            {
+                if (e->data_size != 0)
+                {
                     warn_entry(e, "unexpected-payload-size", "a %s carries a size of %llu; ignoring the payload",
                                tmd_kind_name(e->kind),
                                (unsigned long long)e->data_size);
@@ -1838,7 +2015,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                 }
             }
 
-            if (payload > 0 && !tmd_source_skip(r->src, payload)) {
+            if (payload > 0 && !tmd_source_skip(r->src, payload))
+            {
                 warn_entry(e, "member-data-truncated", "member data is truncated");
             }
         }
@@ -1851,42 +2029,53 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             size_t               path_len = e->path ? strlen(e->path) : 0;
             size_t               k;
 
-            if (path_len > f->max_path) {
+            if (path_len > f->max_path)
+            {
                 f->max_path = path_len;
             }
             /* What a reader that does not understand this archive's extensions
              * would get wrong. 100 is the v7 name field; 255 is the most a
              * ustar prefix and name can express between them. */
-            if (path_len > 100) {
+            if (path_len > 100)
+            {
                 f->paths_over_100++;
             }
-            if (path_len > 255) {
+            if (path_len > 255)
+            {
                 f->paths_over_255++;
             }
 
-            if (e->uid > f->max_uid) {
+            if (e->uid > f->max_uid)
+            {
                 f->max_uid = e->uid;
             }
-            if (e->gid > f->max_gid) {
+            if (e->gid > f->max_gid)
+            {
                 f->max_gid = e->gid;
             }
-            if ((e->uname && e->uname[0]) || (e->gname && e->gname[0])) {
+            if ((e->uname && e->uname[0]) || (e->gname && e->gname[0]))
+            {
                 f->names_present++;
             }
-            if (e->mtime.nsec || e->atime.nsec || e->ctime.nsec) {
+            if (e->mtime.nsec || e->atime.nsec || e->ctime.nsec)
+            {
                 f->subsecond_times++;
             }
-            if (e->atime.present) {
+            if (e->atime.present)
+            {
                 f->atime_present++;
             }
-            if (e->ctime.present) {
+            if (e->ctime.present)
+            {
                 f->ctime_present++;
             }
-            if (e->created.present) {
+            if (e->created.present)
+            {
                 f->created_present++;
             }
 
-            switch (e->kind) {
+            switch (e->kind)
+            {
             case TMD_KIND_DUMPDIR:  f->dumpdirs++; break;
             case TMD_KIND_MULTIVOL: f->multivolume++; break;
             case TMD_KIND_VOLUME:   f->volume_labels++; break;
@@ -1894,14 +2083,18 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             case TMD_KIND_UNKNOWN:  f->unknown_typeflags++; break;
             default: break;
             }
-            if (e->is_sparse) {
-                if (e->typeflag == 'S') {
+            if (e->is_sparse)
+            {
+                if (e->typeflag == 'S')
+                {
                     f->sparse_gnu_old++;
-                } else {
+                } else
+                {
                     f->sparse_pax++;
                 }
             }
-            for (k = 0; k < e->npax; k++) {
+            for (k = 0; k < e->npax; k++)
+            {
                 note_pax_key(f, e->pax[k].key);
             }
         }
@@ -1916,18 +2109,21 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
          * pointing this at an untrusted archive most wants answered, and it is
          * answered before anything has been written to disk.
          */
-        if (e->path && e->path[0] == '/') {
+        if (e->path && e->path[0] == '/')
+        {
             r->archive.features.escape_absolute++;
             warn_entry(e, "path-absolute",
                        "absolute path: extracts to %s unless the leading "
                        "slash is stripped", e->path);
-        } else if (tmd_path_escapes(e->path)) {
+        } else if (tmd_path_escapes(e->path))
+        {
             r->archive.features.escape_traversal++;
             warn_entry(e, "path-escapes-directory",
                        "path climbs out of the extraction directory");
         }
         if ((e->kind == TMD_KIND_SYMLINK || e->kind == TMD_KIND_HARDLINK) &&
-            tmd_link_escapes(e->path, e->linkpath)) {
+            tmd_link_escapes(e->path, e->linkpath))
+        {
             r->archive.features.escape_link++;
             warn_entry(e, "link-escapes-directory",
                        "link target leaves the extraction directory: %s",
@@ -1939,13 +2135,16 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         r->archive.entries++;
         r->archive.total_size += e->size;
         r->archive.total_stored += e->stored_size;
-        if (e->kind <= TMD_KIND_XATTR) {
+        if (e->kind <= TMD_KIND_XATTR)
+        {
             r->archive.counts[e->kind]++;
         }
-        if (!r->archive.writer && format == TMD_FMT_GNU) {
+        if (!r->archive.writer && format == TMD_FMT_GNU)
+        {
             r->archive.writer = "GNU tar";
         }
-        if (!r->archive.writer && format == TMD_FMT_STAR) {
+        if (!r->archive.writer && format == TMD_FMT_STAR)
+        {
             r->archive.writer = "star";
         }
 

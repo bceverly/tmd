@@ -184,8 +184,21 @@ if command -v valgrind > /dev/null 2>&1; then
         -o "$WORK/unittests-plain" "${LIB_SOURCES[@]}" tests/*.c \
         2>> "$WORK/build-plain.log"
 
+  #
+  # --child-silent-after-fork is not a way of ignoring inconvenient findings.
+  #
+  # tmd forks to read a compressed archive: one child execs the system's
+  # decompressor, the other copies bytes into it and leaves through _exit. A
+  # forked child inherits the whole of the parent's heap and frees none of it,
+  # because there is nothing there it owns -- so valgrind, correctly by its own
+  # rules, reports every inherited allocation as definitely lost, once per
+  # child, for every compressed archive the suite reads.
+  #
+  # None of that is tmd's memory behavior; it is what fork means. The parent is
+  # still fully checked, which is the process with the parsing in it.
   VG=(valgrind --quiet --error-exitcode=42
       --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all
+      --child-silent-after-fork=yes
       --track-origins=yes --num-callers=25)
 
   "${VG[@]}" --log-file="$WORK/valgrind-unit.log" \

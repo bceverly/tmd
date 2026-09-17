@@ -2,11 +2,16 @@ Source: tmd
 Section: utils
 Priority: optional
 Maintainer: Bryan C. Everly <bryan@theeverlys.com>
-# Deliberately short, and it is meant to stay that way. tmd is C with no
-# dependencies beyond libc: there is nothing to vendor, nothing to fetch, and a
+# Deliberately short, and it is meant to stay that way. tmd links against
+# nothing but libc: there is nothing to vendor, nothing to fetch, and a
 # Launchpad builder -- which has no network -- can build it from the source
 # package alone. Every entry added here is a reason a build could fail on
 # somebody else's machine.
+#
+# Note that this stays true even though tmd reads compressed archives: it runs
+# the system's decompressor as a separate process, the way GNU tar runs gzip,
+# rather than linking a compression library. Those are RUNTIME dependencies,
+# declared below, and none of them is needed to build.
 Build-Depends:
  debhelper-compat (= 13),
 Standards-Version: 4.7.0
@@ -20,9 +25,32 @@ Package: tmd
 # architecture. "any" rather than a list, because nothing here is
 # architecture-specific -- the build works wherever a C11 compiler does.
 Architecture: any
+# tmd decompresses by running the system's own tool, so the tools it runs are
+# runtime dependencies rather than libraries it links.
+#
+# xz-utils is a Depends: it is priority:standard rather than essential, so a
+# minimal system can genuinely be without it, and .tar.xz is too common for
+# `apt install tmd` to leave that to chance.
+#
+# gzip is deliberately NOT listed. It is Essential:yes, which means it is
+# present on every Debian system by definition -- so depending on it is both
+# redundant and a Policy violation, and lintian says so:
+# "depends-on-essential-package-without-using-version".
+#
+# bzip2 and zstd are Recommends: common enough that most people want them,
+# rare enough that nobody should be forced to take them. The rest are Suggests.
+# Without any of them tmd still works perfectly on uncompressed archives and
+# says plainly which tool is missing when it meets one it cannot open.
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
+ xz-utils,
+Recommends:
+ bzip2,
+ zstd,
+Suggests:
+ lz4,
+ lzip,
 Description: dump the metadata out of a tar archive
  tmd reads a tar archive and reports what is inside it without extracting
  anything. By default it prints one ls(1)-style line per member: the permission
@@ -39,6 +67,11 @@ Description: dump the metadata out of a tar archive
  archive itself -- which generation of the format it belongs to, which
  extensions it relies on, what wrote it, and what it would take to read it
  somewhere else.
+ .
+ Compressed archives are read directly: a .tar.gz, .tar.xz, .tar.bz2, .tar.zst
+ and several others are recognized by content and unpacked on the way in, by
+ running the system's own decompressor as a separate process rather than by
+ linking a compression library.
  .
  The archive is only ever opened for reading. Only headers are read, and member
  data is seeked over, so the cost of reading an archive is proportional to how

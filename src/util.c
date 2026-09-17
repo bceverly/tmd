@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* ------------------------------------------------------------------------- */
 /* Allocation                                                                */
@@ -25,7 +26,8 @@ void *tmd_xmalloc(size_t n)
      * failure. Ask for a byte instead so a zero-length string still has an
      * address to point at. */
     void *p = malloc(n ? n : 1);
-    if (!p) {
+    if (!p)
+    {
         oom(n);
     }
     return p;
@@ -34,7 +36,8 @@ void *tmd_xmalloc(size_t n)
 void *tmd_xcalloc(size_t count, size_t size)
 {
     void *p = calloc(count ? count : 1, size ? size : 1);
-    if (!p) {
+    if (!p)
+    {
         oom(count * size);
     }
     return p;
@@ -43,7 +46,8 @@ void *tmd_xcalloc(size_t count, size_t size)
 void *tmd_xrealloc(void *p, size_t n)
 {
     void *q = realloc(p, n ? n : 1);
-    if (!q) {
+    if (!q)
+    {
         oom(n);
     }
     return q;
@@ -62,7 +66,8 @@ char *tmd_xstrndup(const char *s, size_t n)
     size_t len = 0;
     char  *p;
 
-    while (len < n && s[len] != '\0') {
+    while (len < n && s[len] != '\0')
+    {
         len++;
     }
     p = tmd_xmalloc(len + 1);
@@ -84,10 +89,12 @@ char *tmd_xvasprintf(const char *fmt, va_list ap)
      * passing a format that is not a literal it can verify. */
     n = vsnprintf(stack, sizeof(stack), fmt, copy); /* Flawfinder: ignore */
     va_end(copy);
-    if (n < 0) {
+    if (n < 0)
+    {
         return tmd_xstrdup("");
     }
-    if ((size_t)n < sizeof(stack)) {
+    if ((size_t)n < sizeof(stack))
+    {
         return tmd_xstrdup(stack);
     }
 
@@ -128,13 +135,16 @@ static void buf_reserve(struct tmd_buf *b, size_t extra)
 {
     size_t want = b->len + extra + 1; /* +1 keeps room for the terminator */
 
-    if (want <= b->cap) {
+    if (want <= b->cap)
+    {
         return;
     }
-    if (b->cap == 0) {
+    if (b->cap == 0)
+    {
         b->cap = 64;
     }
-    while (b->cap < want) {
+    while (b->cap < want)
+    {
         b->cap *= 2;
     }
     b->data = tmd_xrealloc(b->data, b->cap);
@@ -142,7 +152,8 @@ static void buf_reserve(struct tmd_buf *b, size_t extra)
 
 void tmd_buf_add(struct tmd_buf *b, const void *data, size_t n)
 {
-    if (n == 0) {
+    if (n == 0)
+    {
         return;
     }
     buf_reserve(b, n);
@@ -181,7 +192,8 @@ char *tmd_buf_detach(struct tmd_buf *b)
 
     /* A buffer nothing was ever added to has no allocation at all, and every
      * caller expects a string it can free. Give it an empty one. */
-    if (!b->data) {
+    if (!b->data)
+    {
         b->data = tmd_xmalloc(1);
         b->data[0] = '\0';
     }
@@ -198,8 +210,10 @@ bool tmd_field_empty(const char *field, size_t len)
 {
     size_t i;
 
-    for (i = 0; i < len; i++) {
-        if (field[i] != '\0' && field[i] != ' ') {
+    for (i = 0; i < len; i++)
+    {
+        if (field[i] != '\0' && field[i] != ' ')
+        {
             return false;
         }
     }
@@ -222,15 +236,18 @@ static bool parse_base256(const char *field, size_t len, int64_t *out)
     /* Only the low 8 bytes can survive in an int64_t. Everything above them
      * has to be pure sign extension, or the value does not fit and saying so
      * is better than reporting a truncated number as fact. */
-    for (i = 0; i + 8 < len; i++) {
+    for (i = 0; i + 8 < len; i++)
+    {
         unsigned char expect = negative ? 0xff : 0x00;
         unsigned char byte = (unsigned char)(i == 0 ? (p[0] & 0x7f) : p[i]);
-        if (byte != (i == 0 ? (unsigned char)(expect & 0x7f) : expect)) {
+        if (byte != (i == 0 ? (unsigned char)(expect & 0x7f) : expect))
+        {
             return false;
         }
     }
 
-    for (; i < len; i++) {
+    for (; i < len; i++)
+    {
         unsigned char byte = (i == 0) ? (unsigned char)(p[0] & 0x7f) : p[i];
         value = (value << 8) | byte;
     }
@@ -246,14 +263,17 @@ static bool parse_octal(const char *field, size_t len, uint64_t *out)
     bool     digits = false;
 
     /* Leading whitespace is legal; some writers right-align the number. */
-    while (i < len && (field[i] == ' ' || field[i] == '\t')) {
+    while (i < len && (field[i] == ' ' || field[i] == '\t'))
+    {
         i++;
     }
 
-    for (; i < len && field[i] >= '0' && field[i] <= '7'; i++) {
+    for (; i < len && field[i] >= '0' && field[i] <= '7'; i++)
+    {
         /* An 8-byte field of octal digits cannot overflow, but a caller may
          * hand us a longer one and a hostile archive will. */
-        if (value > (UINT64_MAX >> 3)) {
+        if (value > (UINT64_MAX >> 3))
+        {
             return false;
         }
         value = (value << 3) | (uint64_t)(field[i] - '0');
@@ -262,13 +282,16 @@ static bool parse_octal(const char *field, size_t len, uint64_t *out)
 
     /* Whatever is left has to be padding. A field like "0644x" is corrupt,
      * and quietly accepting the first four characters of it hides that. */
-    for (; i < len; i++) {
-        if (field[i] != '\0' && field[i] != ' ' && field[i] != '\t') {
+    for (; i < len; i++)
+    {
+        if (field[i] != '\0' && field[i] != ' ' && field[i] != '\t')
+        {
             return false;
         }
     }
 
-    if (!digits) {
+    if (!digits)
+    {
         return false;
     }
     *out = value;
@@ -277,12 +300,15 @@ static bool parse_octal(const char *field, size_t len, uint64_t *out)
 
 bool tmd_parse_num(const char *field, size_t len, uint64_t *out)
 {
-    if (len == 0) {
+    if (len == 0)
+    {
         return false;
     }
-    if ((unsigned char)field[0] & 0x80) {
+    if ((unsigned char)field[0] & 0x80)
+    {
         int64_t signed_value;
-        if (!parse_base256(field, len, &signed_value) || signed_value < 0) {
+        if (!parse_base256(field, len, &signed_value) || signed_value < 0)
+        {
             return false;
         }
         *out = (uint64_t)signed_value;
@@ -295,16 +321,20 @@ bool tmd_parse_num_signed(const char *field, size_t len, int64_t *out)
 {
     uint64_t unsigned_value;
 
-    if (len == 0) {
+    if (len == 0)
+    {
         return false;
     }
-    if ((unsigned char)field[0] & 0x80) {
+    if ((unsigned char)field[0] & 0x80)
+    {
         return parse_base256(field, len, out);
     }
-    if (!parse_octal(field, len, &unsigned_value)) {
+    if (!parse_octal(field, len, &unsigned_value))
+    {
         return false;
     }
-    if (unsigned_value > (uint64_t)INT64_MAX) {
+    if (unsigned_value > (uint64_t)INT64_MAX)
+    {
         return false;
     }
     *out = (int64_t)unsigned_value;
@@ -315,7 +345,8 @@ void tmd_field_str(const char *field, size_t len, char *out)
 {
     size_t i;
 
-    for (i = 0; i < len && field[i] != '\0'; i++) {
+    for (i = 0; i < len && field[i] != '\0'; i++)
+    {
         out[i] = field[i];
     }
     out[i] = '\0';
@@ -339,32 +370,41 @@ static bool utf8_scan(const char *s, size_t len, size_t *bad)
     const unsigned char *p = (const unsigned char *)s;
     size_t               i = 0;
 
-    while (i < len) {
+    while (i < len)
+    {
         unsigned char c = p[i];
         size_t        extra;
         uint32_t      cp;
 
-        if (c < 0x80) {
+        if (c < 0x80)
+        {
             i++;
             continue;
         }
-        if ((c & 0xe0) == 0xc0) {
+        if ((c & 0xe0) == 0xc0)
+        {
             extra = 1;
             cp = c & 0x1fu;
-        } else if ((c & 0xf0) == 0xe0) {
+        } else if ((c & 0xf0) == 0xe0)
+        {
             extra = 2;
             cp = c & 0x0fu;
-        } else if ((c & 0xf8) == 0xf0) {
+        } else if ((c & 0xf8) == 0xf0)
+        {
             extra = 3;
             cp = c & 0x07u;
-        } else {
+        } else
+        {
             goto bad_at; /* a continuation byte or an over-long lead */
         }
-        if (i + extra >= len) {
+        if (i + extra >= len)
+        {
             goto bad_at; /* the continuation bytes run past the end */
         }
-        for (size_t k = 1; k <= extra; k++) {
-            if ((p[i + k] & 0xc0) != 0x80) {
+        for (size_t k = 1; k <= extra; k++)
+        {
+            if ((p[i + k] & 0xc0) != 0x80)
+            {
                 goto bad_at;
             }
             cp = (cp << 6) | (uint32_t)(p[i + k] & 0x3f);
@@ -373,10 +413,12 @@ static bool utf8_scan(const char *s, size_t len, size_t *bad)
          * over-long forms, surrogates, and anything past U+10FFFF. Those are
          * exactly what a path crafted to slip past a filter looks like. */
         if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) ||
-            (extra == 3 && cp < 0x10000)) {
+            (extra == 3 && cp < 0x10000))
+        {
             goto bad_at;
             }
-        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+        {
             goto bad_at;
         }
         i += extra + 1;
@@ -384,7 +426,8 @@ static bool utf8_scan(const char *s, size_t len, size_t *bad)
     return true;
 
 bad_at:
-    if (bad) {
+    if (bad)
+    {
         *bad = i;
     }
     return false;
@@ -433,14 +476,17 @@ char *tmd_base64_encode(const void *data, size_t n)
      * where the difference costs anything.
      */
     tmd_buf_init(&b);
-    for (i = 0; i < n; i += 3) {
+    for (i = 0; i < n; i += 3)
+    {
         size_t   have = n - i; /* 3, or 1 or 2 in the final group */
         uint32_t v = (uint32_t)p[i] << 16;
 
-        if (have > 1) {
+        if (have > 1)
+        {
             v |= (uint32_t)p[i + 1] << 8;
         }
-        if (have > 2) {
+        if (have > 2)
+        {
             v |= p[i + 2];
         }
 
@@ -485,28 +531,84 @@ bool tmd_base64_decode(const char *s, struct tmd_buf *out)
     uint32_t acc = 0;
     unsigned bits = 0;
 
-    if (len == 0 || (len % 4) != 0) {
+    if (len == 0 || (len % 4) != 0)
+    {
         return false;
     }
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < len; i++)
+    {
         int v;
 
-        if (s[i] == '=') {
+        if (s[i] == '=')
+        {
             /* Padding is only ever the last one or two characters. */
-            if (i + 2 < len || (i + 2 == len && s[i + 1] != '=')) {
+            if (i + 2 < len || (i + 2 == len && s[i + 1] != '='))
+            {
                 return false;
             }
             break;
         }
         v = b64_value((unsigned char)s[i]);
-        if (v < 0) {
+        if (v < 0)
+        {
             return false;
         }
         acc = (acc << 6) | (uint32_t)v;
         bits += 6;
-        if (bits >= 8) {
+        if (bits >= 8)
+        {
             bits -= 8;
             tmd_buf_addc(out, (char)(unsigned char)((acc >> bits) & 0xff));
+        }
+    }
+    return true;
+}
+
+/*
+ * Copy a descriptor to another, sending some bytes of your own first.
+ *
+ * Lives here, rather than inline in the process that uses it, for two reasons.
+ * It is a general thing -- "write this prefix, then everything else that
+ * arrives" -- with real edge cases in it: a short write is not an error and has
+ * to be resumed, and a short read is not the end. And a loop inside a forked
+ * child is a loop no test can watch: the child leaves through _exit, which
+ * deliberately skips the coverage flush, so every branch in it is invisible
+ * however hard it is exercised. Out here it can be called with two pipes and
+ * checked.
+ *
+ * False means a write failed, which for the caller means the far end went away.
+ */
+bool tmd_copy_fd(int from_fd, int to_fd, const void *prefix, size_t prefix_len)
+{
+    const char *head = prefix;
+    char        buf[65536];
+    size_t      sent = 0;
+    ssize_t     n;
+
+    while (sent < prefix_len)
+    {
+        ssize_t wrote = write(to_fd, head + sent, prefix_len - sent);
+
+        if (wrote <= 0)
+        {
+            return false;
+        }
+        sent += (size_t)wrote;
+    }
+
+    while ((n = read(from_fd, buf, sizeof(buf))) > 0)
+    {
+        ssize_t off = 0;
+
+        while (off < n)
+        {
+            ssize_t wrote = write(to_fd, buf + off, (size_t)(n - off));
+
+            if (wrote <= 0)
+            {
+                return false;
+            }
+            off += wrote;
         }
     }
     return true;
@@ -537,23 +639,29 @@ static bool walk_depth(const char *s, long *depth)
 {
     const char *p = s;
 
-    while (*p) {
+    while (*p)
+    {
         const char *start = p;
         size_t      len;
 
-        while (*p && *p != '/') {
+        while (*p && *p != '/')
+        {
             p++;
         }
         len = (size_t)(p - start);
-        if (len == 2 && start[0] == '.' && start[1] == '.') {
+        if (len == 2 && start[0] == '.' && start[1] == '.')
+        {
             --(*depth);
-            if (*depth < 0) {
+            if (*depth < 0)
+            {
                 return false;
             }
-        } else if (len != 0 && !(len == 1 && start[0] == '.')) {
+        } else if (len != 0 && !(len == 1 && start[0] == '.'))
+        {
             ++(*depth);
         }
-        while (*p == '/') {
+        while (*p == '/')
+        {
             p++;
         }
     }
@@ -564,10 +672,12 @@ bool tmd_path_escapes(const char *path)
 {
     long depth = 0;
 
-    if (!path || !path[0]) {
+    if (!path || !path[0])
+    {
         return false;
     }
-    if (path[0] == '/') {
+    if (path[0] == '/')
+    {
         return true;
     }
     return !walk_depth(path, &depth);
@@ -578,13 +688,16 @@ bool tmd_link_escapes(const char *path, const char *target)
     long        depth = 0;
     const char *slash;
 
-    if (!target || !target[0]) {
+    if (!target || !target[0])
+    {
         return false;
     }
-    if (target[0] == '/') {
+    if (target[0] == '/')
+    {
         return true;
     }
-    if (!path) {
+    if (!path)
+    {
         return false;
     }
     /*
@@ -593,12 +706,14 @@ bool tmd_link_escapes(const char *path, const char *target)
      * while "a/b/link -> ../c" stays in.
      */
     slash = strrchr(path, '/');
-    if (slash) {
+    if (slash)
+    {
         char *dir = tmd_xstrndup(path, (size_t)(slash - path));
         bool  ok = walk_depth(dir, &depth);
 
         free(dir);
-        if (!ok) {
+        if (!ok)
+        {
             return true; /* the link's own path already escapes */
         }
     }
@@ -626,7 +741,8 @@ bool tmd_path_matches(const char *path, const char *pattern)
     size_t      len;
     bool        hit;
 
-    if (strchr(pattern, '/') != NULL) {
+    if (strchr(pattern, '/') != NULL)
+    {
         return fnmatch(pattern, path, 0) == 0;
     }
 
@@ -634,16 +750,19 @@ bool tmd_path_matches(const char *path, const char *pattern)
      * basename is the component before that slash and not the empty string
      * after it. */
     end = path + strlen(path);
-    while (end > path && end[-1] == '/') {
+    while (end > path && end[-1] == '/')
+    {
         end--;
     }
     base = end;
-    while (base > path && base[-1] != '/') {
+    while (base > path && base[-1] != '/')
+    {
         base--;
     }
     len = (size_t)(end - base);
 
-    if (len < sizeof(stack)) {
+    if (len < sizeof(stack))
+    {
         memcpy(stack, base, len);
         stack[len] = '\0';
         return fnmatch(pattern, stack, 0) == 0;
@@ -660,7 +779,8 @@ void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11])
                                     "r--", "r-x", "rw-", "rwx" };
     char type;
 
-    switch (kind) {
+    switch (kind)
+    {
     case TMD_KIND_DIR:        type = 'd'; break;
     case TMD_KIND_SYMLINK:    type = 'l'; break;
     case TMD_KIND_HARDLINK:   type = 'h'; break;
@@ -683,13 +803,16 @@ void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11])
     /* setuid/setgid/sticky replace the matching execute character, upper-case
      * when the execute bit underneath is not set — the same convention ls
      * uses, so a mode that is surprising looks surprising. */
-    if (mode & 04000) {
+    if (mode & 04000)
+    {
         out[3] = (out[3] == 'x') ? 's' : 'S';
     }
-    if (mode & 02000) {
+    if (mode & 02000)
+    {
         out[6] = (out[6] == 'x') ? 's' : 'S';
     }
-    if (mode & 01000) {
+    if (mode & 01000)
+    {
         out[9] = (out[9] == 'x') ? 't' : 'T';
     }
     out[10] = '\0';
@@ -701,15 +824,19 @@ const char *tmd_human_size(uint64_t bytes, char *buf, size_t bufsz)
     double value = (double)bytes;
     size_t unit = 0;
 
-    while (value >= 1024.0 && unit + 1 < sizeof(units)) {
+    while (value >= 1024.0 && unit + 1 < sizeof(units))
+    {
         value /= 1024.0;
         unit++;
     }
-    if (unit == 0) {
+    if (unit == 0)
+    {
         (void)snprintf(buf, bufsz, "%uB", (unsigned)bytes);
-    } else if (value < 10.0) {
+    } else if (value < 10.0)
+    {
         (void)snprintf(buf, bufsz, "%.1f%c", value, units[unit]);
-    } else {
+    } else
+    {
         (void)snprintf(buf, bufsz, "%.0f%c", value, units[unit]);
     }
     return buf;
@@ -724,7 +851,8 @@ uint64_t tmd_round_up_blocks(uint64_t n)
      * into "skip nothing" and re-read the same header forever. The saturated
      * value is the largest multiple of the block size that fits, so a caller
      * that divides it by 512 still gets a whole number of blocks. */
-    if (n > UINT64_MAX - (TMD_BLOCK_SIZE - 1)) {
+    if (n > UINT64_MAX - (TMD_BLOCK_SIZE - 1))
+    {
         return (UINT64_MAX / TMD_BLOCK_SIZE) * TMD_BLOCK_SIZE;
     }
     blocks = (n + TMD_BLOCK_SIZE - 1) / TMD_BLOCK_SIZE;

@@ -112,6 +112,57 @@ jobs:
         run: make test-cli
 
   # ==========================================================================
+  # The same tests on a different architecture.
+  #
+  # Everything else here runs on x86-64, where three things are true that are
+  # not true everywhere: the machine is little-endian, `time_t` is 64 bits, and
+  # plain `char` is signed. tmd is written not to care -- every header field is
+  # decoded byte by byte, so there is not a single multi-byte load in the
+  # program -- but nothing proved it, and "endian-clean by construction" is a
+  # claim a test should be making rather than a comment.
+  #
+  # aarch64 is the cheap half of that. GitHub's arm runners are native, so this
+  # costs no more than the x86 legs, and it moves two of the three: `char` is
+  # unsigned there, and the ABI is different. It is still little-endian, so a
+  # genuine byte-order bug would survive it -- the qemu-based big-endian leg
+  # that would catch one is a separate, slower job and not this.
+  arm:
+    name: Tests (aarch64)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the compiler and the archive tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential libarchive-tools
+
+      - name: Confirm this really is aarch64
+        # Cheap, and it fails loudly if the runner label ever silently falls
+        # back to x86 -- at which point this job would be testing nothing while
+        # continuing to report success.
+        run: |
+          arch="$(uname -m)"
+          echo "running on $arch"
+          test "$arch" = "aarch64"
+
+      - name: make build
+        run: make build
+
+      - name: Build again with -Werror
+        run: make clean && make build WERROR=-Werror
+
+      - name: make test-unit
+        run: make test-unit
+
+      - name: make test-cli
+        run: make test-cli
+
+  # ==========================================================================
   # Separate from `test` because it is slow and because its failures are of a
   # different kind: not "the answer is wrong" but "the program did something it
   # is not allowed to do".

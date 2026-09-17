@@ -37,10 +37,12 @@ static void report_warnings(const struct tmd_archive *a, const struct tmd_entry 
 {
     size_t i;
 
-    if (opt->quiet) {
+    if (opt->quiet)
+    {
         return;
     }
-    for (i = 0; i < e->nwarnings; i++) {
+    for (i = 0; i < e->nwarnings; i++)
+    {
         (void)fprintf(stderr, "tmd: %s: %s: %s\n", a->name,
                       e->path && e->path[0] ? e->path : "(unnamed member)",
                       e->warnings[i].text);
@@ -52,10 +54,12 @@ static void report_archive_warnings(const struct tmd_archive *a,
 {
     size_t i;
 
-    if (opt->quiet) {
+    if (opt->quiet)
+    {
         return;
     }
-    for (i = from; i < a->nwarnings; i++) {
+    for (i = from; i < a->nwarnings; i++)
+    {
         (void)fprintf(stderr, "tmd: %s: %s\n", a->name, a->warnings[i].text);
     }
 }
@@ -75,7 +79,8 @@ static int dump_archive(const char *path, struct tmd_render *rd,
     int                       rc;
 
     src = tmd_source_open(path, &err);
-    if (!src) {
+    if (!src)
+    {
         (void)fprintf(stderr, "tmd: %s\n", err ? err : "cannot open the archive");
         free(err);
         return TMD_EXIT_ERROR;
@@ -88,7 +93,8 @@ static int dump_archive(const char *path, struct tmd_render *rd,
     archive = tmd_reader_archive(reader);
     tmd_render_archive_begin(rd, archive);
 
-    while ((rc = tmd_reader_next(reader, &entry)) == 1) {
+    while ((rc = tmd_reader_next(reader, &entry)) == 1)
+    {
         tmd_render_entry(rd, entry);
         report_warnings(archive, entry, opt);
         /* Archive-level complaints can be raised while reading a member — a
@@ -98,16 +104,35 @@ static int dump_archive(const char *path, struct tmd_render *rd,
         warnings_reported = archive->nwarnings;
     }
 
-    if (rc < 0) {
+    /*
+     * The decompressor's verdict, which the reader cannot see.
+     *
+     * A corrupt .tar.gz decompresses part way and then stops, and what reached
+     * the reader was a perfectly well-formed prefix of an archive. Reporting it
+     * as a complete listing with exit 0 would be a silent wrong answer, so the
+     * archive's own status is overridden here.
+     */
+    if (tmd_source_codec_failed(src))
+    {
+        (void)fprintf(stderr, "tmd: %s: the %s stream ended badly; what is "
+                              "above is only what could be decompressed\n",
+                      path, tmd_source_codec(src));
+        status = TMD_EXIT_ERROR;
+    }
+
+    if (rc < 0)
+    {
         (void)fprintf(stderr, "tmd: %s\n", tmd_reader_error(reader));
         status = TMD_EXIT_ERROR;
-    } else {
+    } else
+    {
         tmd_render_archive_end(rd, archive);
         report_archive_warnings(archive, opt, warnings_reported);
         /* A missing end-of-archive marker means the file was cut short, which
          * is a finding whether or not every header that survived is intact. */
         if (opt->check && (archive->bad_checksums > 0 || !archive->eof_marker ||
-                           archive->trailing_garbage)) {
+                           archive->trailing_garbage))
+        {
             status = TMD_EXIT_CHECK;
                            }
     }
@@ -126,22 +151,26 @@ int main(int argc, char **argv)
     size_t             i;
 
     status = tmd_parse_args(argc, argv, &cli);
-    if (status != TMD_EXIT_OK) {
+    if (status != TMD_EXIT_OK)
+    {
         tmd_free_args(&cli);
         return status;
     }
-    if (cli.want_help) {
+    if (cli.want_help)
+    {
         tmd_print_usage(stdout);
         tmd_free_args(&cli);
         return TMD_EXIT_OK;
     }
-    if (cli.want_version) {
+    if (cli.want_version)
+    {
         tmd_print_version(stdout);
         tmd_free_args(&cli);
         return TMD_EXIT_OK;
     }
 
-    if (cli.output_path) {
+    if (cli.output_path)
+    {
         int fd;
 
         /*
@@ -165,13 +194,15 @@ int main(int argc, char **argv)
          * for. Shell `>` behaves the same way.
          */
         fd = open(cli.output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (fd < 0) {
+        if (fd < 0)
+        {
             (void)fprintf(stderr, "tmd: %s: %s\n", cli.output_path, strerror(errno));
             tmd_free_args(&cli);
             return TMD_EXIT_ERROR;
         }
         out = fdopen(fd, "w");
-        if (!out) {
+        if (!out)
+        {
             (void)fprintf(stderr, "tmd: %s: %s\n", cli.output_path, strerror(errno));
             (void)close(fd);
             tmd_free_args(&cli);
@@ -184,15 +215,19 @@ int main(int argc, char **argv)
      * two things and report on the pair, rather than reporting on each archive
      * in turn. So they run instead of the loop below, not inside it.
      */
-    if (cli.options.diff || cli.options.verify) {
-        if (cli.options.diff) {
+    if (cli.options.diff || cli.options.verify)
+    {
+        if (cli.options.diff)
+        {
             status = tmd_diff_archives(cli.files[0], cli.files[1], out,
                                        &cli.options);
-        } else {
+        } else
+        {
             status = tmd_verify_archive(cli.files[0], cli.options.verify, out,
                                         &cli.options);
         }
-        if (fflush(out) != 0 || (cli.output_path && fclose(out) != 0)) {
+        if (fflush(out) != 0 || (cli.output_path && fclose(out) != 0))
+        {
             (void)fprintf(stderr, "tmd: %s: %s\n",
                           cli.output_path ? cli.output_path
                                           : "(standard output)",
@@ -204,12 +239,14 @@ int main(int argc, char **argv)
     }
 
     rd = tmd_render_new(out, &cli.options, (int)cli.nfiles);
-    for (i = 0; i < cli.nfiles; i++) {
+    for (i = 0; i < cli.nfiles; i++)
+    {
         int one = dump_archive(cli.files[i], rd, &cli.options);
         /* The worst outcome wins, and one unreadable archive does not stop the
          * others: `tmd -f a.tar -f b.tar` should report on b even when a is
          * missing. */
-        if (one > status) {
+        if (one > status)
+        {
             status = one;
         }
     }
@@ -225,7 +262,8 @@ int main(int argc, char **argv)
      * either.
      */
     if (status == TMD_EXIT_OK && cli.options.nmatch > 0 &&
-        tmd_render_matched(rd) == 0) {
+        tmd_render_matched(rd) == 0)
+    {
         status = TMD_EXIT_NOMATCH;
     }
     tmd_render_free(rd);
@@ -238,7 +276,8 @@ int main(int argc, char **argv)
      * write the report is the kind of lie that makes a backup script report
      * success.
      */
-    if (fflush(out) != 0 || (cli.output_path && fclose(out) != 0)) {
+    if (fflush(out) != 0 || (cli.output_path && fclose(out) != 0))
+    {
         (void)fprintf(stderr, "tmd: %s: %s\n",
                       cli.output_path ? cli.output_path : "(standard output)",
                       strerror(errno));

@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include "test.h"
+#include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -89,7 +92,8 @@ static void test_buffer(void)
 
     TEST_CASE("growing past the initial capacity keeps the contents");
     tmd_buf_init(&b);
-    for (int i = 0; i < 500; i++) {
+    for (int i = 0; i < 500; i++)
+    {
         tmd_buf_addc(&b, 'x');
     }
     CHECK_INT(b.len, 500);
@@ -230,7 +234,8 @@ static void test_base64(void)
     size_t i;
 
     TEST_CASE("base64 encodes the RFC 4648 test vectors");
-    for (i = 0; i < sizeof(vectors) / sizeof(*vectors); i++) {
+    for (i = 0; i < sizeof(vectors) / sizeof(*vectors); i++)
+    {
         char *got = tmd_base64_encode(vectors[i].plain, strlen(vectors[i].plain));
 
         CHECK_STR(got, vectors[i].encoded);
@@ -238,7 +243,8 @@ static void test_base64(void)
     }
 
     TEST_CASE("base64 decodes them back");
-    for (i = 1; i < sizeof(vectors) / sizeof(*vectors); i++) {
+    for (i = 1; i < sizeof(vectors) / sizeof(*vectors); i++)
+    {
         struct tmd_buf out;
 
         tmd_buf_init(&out);
@@ -254,7 +260,8 @@ static void test_base64(void)
         char *enc;
         size_t k;
 
-        for (k = 0; k < sizeof(all); k++) {
+        for (k = 0; k < sizeof(all); k++)
+        {
             all[k] = (unsigned char)k;
         }
         enc = tmd_base64_encode(all, sizeof(all));
@@ -280,7 +287,8 @@ static void test_base64(void)
         };
         size_t k;
 
-        for (k = 0; k < sizeof(bad) / sizeof(*bad); k++) {
+        for (k = 0; k < sizeof(bad) / sizeof(*bad); k++)
+        {
             struct tmd_buf out;
 
             tmd_buf_init(&out);
@@ -350,7 +358,8 @@ static void test_path_matching(void)
         size_t i;
 
         memcpy(path, "deep/", 5);
-        for (i = 5; i < sizeof(path) - 1; i++) {
+        for (i = 5; i < sizeof(path) - 1; i++)
+        {
             path[i] = 'x';
         }
         path[sizeof(path) - 1] = '\0';
@@ -403,6 +412,149 @@ static void test_path_escapes(void)
     CHECK(!tmd_link_escapes("a/b", NULL));
 }
 
+static void test_copy_fd(void)
+{
+    /*
+     * Exercised with two real pipes, which is the point of it living out here:
+     * in the forked feeder that uses it, every branch is invisible to coverage
+     * because the child leaves through _exit.
+     */
+    TEST_CASE("the prefix is written before anything is read");
+    {
+        int in[2];
+        int out[2];
+
+        CHECK(pipe(in) == 0);
+        CHECK(pipe(out) == 0);
+        CHECK(write(in[1], "TAIL", 4) == 4);
+        (void)close(in[1]);
+        CHECK(tmd_copy_fd(in[0], out[1], "HEAD", 4));
+        (void)close(out[1]);
+        {
+            char    got[64];
+            ssize_t n = read(out[0], got, sizeof(got));
+
+            CHECK(n == 8);
+            CHECK(memcmp(got, "HEADTAIL", 8) == 0);
+        }
+        (void)close(in[0]);
+        (void)close(out[0]);
+    }
+
+    TEST_CASE("an empty prefix and an empty source copy nothing, successfully");
+    {
+        int in[2];
+        int out[2];
+
+        CHECK(pipe(in) == 0);
+        CHECK(pipe(out) == 0);
+        (void)close(in[1]);
+        CHECK(tmd_copy_fd(in[0], out[1], "", 0));
+        (void)close(in[0]);
+        (void)close(out[0]);
+        (void)close(out[1]);
+    }
+
+    /*
+     * More than one buffer's worth, so the read loop runs more than once and a
+     * short write has somewhere to happen.
+     */
+    TEST_CASE("a payload larger than the buffer arrives whole");
+    {
+        int     in[2];
+        int     out[2];
+        size_t  total = 300000;
+        char   *sent = tmd_xmalloc(total);
+        size_t  i;
+        pid_t   writer;
+
+        for (i = 0; i < total; i++)
+        {
+            sent[i] = (char)(i % 251);
+        }
+        CHECK(pipe(in) == 0);
+        CHECK(pipe(out) == 0);
+
+        /* A pipe holds far less than this, so the source has to be fed by
+         * somebody while tmd_copy_fd drains it. */
+        writer = fork();
+        CHECK(writer >= 0);
+        if (writer == 0)
+        {
+            size_t off = 0;
+
+            (void)close(in[0]);
+            (void)close(out[0]);
+            (void)close(out[1]);
+            while (off < total)
+            {
+                ssize_t w = write(in[1], sent + off, total - off);
+
+                if (w <= 0)
+                {
+                    break;
+                }
+                off += (size_t)w;
+            }
+            (void)close(in[1]);
+            /* This child has its own copy of the parent's heap and leaves
+             * through _exit, which runs no cleanup. Valgrind counts what it
+             * still holds as lost -- correctly. */
+            free(sent);
+            _exit(0);
+        }
+        (void)close(in[1]);
+
+        {
+            pid_t reader = fork();
+
+            CHECK(reader >= 0);
+            if (reader == 0)
+            {
+                (void)close(out[1]);
+                /* Drain, so the copy below is never blocked on a full pipe. */
+                for (;;)
+                {
+                    char    sink[4096];
+                    ssize_t n = read(out[0], sink, sizeof(sink));
+
+                    if (n <= 0)
+                    {
+                        break;
+                    }
+                }
+                free(sent);
+                _exit(0);
+            }
+            (void)close(out[0]);
+            CHECK(tmd_copy_fd(in[0], out[1], NULL, 0));
+            (void)close(out[1]);
+            (void)close(in[0]);
+            (void)waitpid(writer, NULL, 0);
+            (void)waitpid(reader, NULL, 0);
+        }
+        free(sent);
+    }
+
+    /* The destination going away is the failure this reports. */
+    TEST_CASE("a closed destination is reported rather than ignored");
+    {
+        int in[2];
+        int out[2];
+
+        CHECK(pipe(in) == 0);
+        CHECK(pipe(out) == 0);
+        (void)close(out[0]);            /* nobody is listening */
+        (void)signal(SIGPIPE, SIG_IGN); /* so the write fails instead of killing us */
+        CHECK(write(in[1], "x", 1) == 1);
+        (void)close(in[1]);
+        CHECK(!tmd_copy_fd(in[0], out[1], "prefix", 6));
+        (void)signal(SIGPIPE, SIG_DFL);
+        (void)close(in[0]);
+        (void)close(out[1]);
+    }
+}
+
 void test_util(void)
 {
     test_numeric_fields();
@@ -417,4 +569,5 @@ void test_util(void)
     test_rounding();
     test_path_matching();
     test_path_escapes();
+    test_copy_fd();
 }
