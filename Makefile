@@ -14,6 +14,13 @@ SHELL       := /bin/bash
 # gains a "-dev" suffix whenever this tree is not the tagged release — see
 # scripts/version.sh. A bug report saying "1.0.0.6" names a build somebody else
 # can download; one saying "1.0.0.6-dev" names a build only its author has.
+#
+# Note that VERSION is overloaded: `make release VERSION=1.2.3.4` sets it as a
+# command-line override, which wins over the assignment below and propagates to
+# every sub-make through MAKEFLAGS. That is deliberate for `make deb`, where
+# debian/rules passes the released number on purpose — but it silently stamped
+# release builds with a bare number instead of the "-dev" the tree really was,
+# so scripts/release.sh clears the override once it has read the argument.
 BASE_VERSION := $(shell cat VERSION)
 VERSION     := $(shell scripts/version.sh)
 PROG        := tmd

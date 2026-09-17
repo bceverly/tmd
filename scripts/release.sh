@@ -58,13 +58,33 @@ LATEST="$(git tag -l 'v*' 2>/dev/null \
           | sort -V \
           | tail -1)"
 
-EXPLICIT="${VERSION:-}"
+# `make release VERSION=1.2.3.4` hands this script the number two ways at once:
+# as an environment variable — which is how it is read, just below — and as a
+# make *override*, which make propagates to every sub-make and every child
+# process through MAKEFLAGS.
+#
+# That second path was a trap. The Makefile has its own
+# `VERSION := $(shell scripts/version.sh)`, the string compiled into the binary,
+# and an override replaces it. So the rebuild further down stamped a bare
+# "1.2.3.4" instead of the "1.2.3.4-dev" this tree actually builds (the bump is
+# not committed and the tag does not exist yet), and then the pre-commit hook's
+# `make lint` — which derives the version for itself and so was never fooled —
+# refused to commit the release it had just prepared. A plain `make release`
+# never hit it, because there was no override to propagate.
+#
+# The argument has been read by the time the next line runs, so the make
+# plumbing is dropped here, once, rather than at each place downstream that
+# shells out.
+VERSION_ARG="${VERSION:-}"
+unset VERSION MAKEFLAGS MAKEOVERRIDES
+
+EXPLICIT="$VERSION_ARG"
 
 if [ -n "$EXPLICIT" ]; then
   # Both "1.2.3.4" and "v1.2.3.4" are accepted; the tag always gets the "v".
   EXPLICIT="${EXPLICIT#v}"
   echo "$EXPLICIT" | grep -qE "$VERSION_PATTERN" \
-    || die "VERSION must look like 1.2.3.4 or v1.2.3.4 (four numbers), got '${VERSION}'."
+    || die "VERSION must look like 1.2.3.4 or v1.2.3.4 (four numbers), got '${VERSION_ARG}'."
   NEXT="$EXPLICIT"
   if [ -n "$LATEST" ]; then
     info "Current version:  v$LATEST"
@@ -145,6 +165,14 @@ BUILT="$(./bin/tmd --version | head -1 | awk '{print $2}')"
 # suffix on its own.
 [ "${BUILT%-dev}" = "$NEXT" ] \
   || die "The rebuilt binary reports $BUILT, not $NEXT."
+
+# And check what `make lint` is about to check, with the same comparison, so the
+# two can never disagree. Catching a mismatch here names it plainly; catching it
+# in the pre-commit hook aborts a release that is already half prepared.
+EXPECTED="$(scripts/version.sh)"
+[ "$BUILT" = "$EXPECTED" ] || die "The rebuilt binary reports $BUILT, but this
+       tree builds $EXPECTED — 'make lint' would reject the commit. Nothing was
+       committed."
 ok "./bin/tmd reports $BUILT"
 
 # ---------------------------------------------------------------------------
