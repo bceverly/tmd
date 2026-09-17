@@ -301,10 +301,13 @@ jobs:
           set -eux
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
-          # tar for building a test archive, man-db so the manpage can be
-          # looked up. Deliberately NOT a compiler: the package must not need
-          # one to run.
-          apt-get install -y -qq --no-install-recommends tar man-db
+          # tar for building a test archive, gzip so the pipe check below can
+          # feed tmd through a real non-seekable pipe the way the manpage
+          # documents, man-db so the manpage can be looked up. gzip is named
+          # explicitly rather than assumed to be in the base image, because a
+          # check that silently vanishes is worse than one that fails.
+          # Deliberately NOT a compiler: the package must not need one to run.
+          apt-get install -y -qq --no-install-recommends tar gzip man-db
 
           # Make the container behave like a real Ubuntu system before
           # installing anything.
@@ -375,8 +378,33 @@ jobs:
           tmd -f /tmp/check.tar   | awk '{print $1, $NF}' > /tmp/tmd.txt
           diff /tmp/tar.txt /tmp/tmd.txt
 
-          # A bare invocation shows the usage and succeeds.
-          tmd > /dev/null
+          # The usage text, via the flag. NOT via a bare `tmd`: with no -f,
+          # tmd reads standard input -- that is what makes the pipe form
+          # work -- and a bare invocation only prints the usage when stdin
+          # is a TERMINAL. There is no terminal in a container, so the old
+          # `tmd > /dev/null` here read a closed stdin, correctly called it
+          # an empty archive, exited 1, and failed this job on a package
+          # that was perfectly good. The terminal path needs a pty and is
+          # covered by tests/cli/run.sh, which allocates one with script(1).
+          tmd --help | grep -q 'Usage: tmd'
+
+          # So the documented no-terminal behavior is the one to assert:
+          # nothing on stdin is an empty archive, and that is an error.
+          tmd < /dev/null && exit 1 || test $? -eq 1
+
+          # The pipe contract, which nothing else in this job covered --
+          # and which is the reason the check above had to change. Reading
+          # the archive from a non-seekable pipe must give exactly what
+          # reading it from a file gives.
+          tmd < /tmp/check.tar > /tmp/stdin.txt
+          diff /tmp/report.txt /tmp/stdin.txt
+
+          # The same thing the way a user actually writes it, through a
+          # real pipe from another process.
+          gzip -c /tmp/check.tar > /tmp/check.tar.gz
+          gzip -dc /tmp/check.tar.gz | tmd > /tmp/pipe.txt
+          diff /tmp/report.txt /tmp/pipe.txt
+
           # A missing archive fails with the documented status.
           tmd -f /nonexistent.tar && exit 1 || test $? -eq 1
 
