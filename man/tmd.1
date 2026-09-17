@@ -103,6 +103,12 @@ do not write warnings about damaged headers to standard error
 .B \-m, \-\-match=PATTERN
 show only members matching PATTERN; repeatable. A pattern with a '/' matches the whole path, one without it the basename
 .TP
+.B     \-\-diff
+compare two archives given with \-f and report what changed
+.TP
+.B     \-\-verify=FILE
+check the archive against a manifest of expected "SIZE PATH" lines
+.TP
 .B     \-\-stat
 report distributions instead of a listing: sizes, padding, and how the archive's timestamps are spread
 .TP
@@ -142,6 +148,9 @@ the command line was wrong
 .TP
 .B 4
 \-\-match was given and no member matched
+.TP
+.B 5
+\-\-diff or \-\-verify found differences
 .SH EXAMPLES
 .TP
 .B tmd \-f archive.tar

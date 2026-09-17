@@ -288,6 +288,177 @@ offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sor
 check "each copy reports a different offset" "$offsets" "2"
 
 # ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ --diff\033[0m\n'
+
+mkdir -p dtree
+echo "original"      > dtree/keep.txt
+echo "small"         > dtree/changes.txt
+echo "gone"          > dtree/removed.txt
+touch -d "@1700000000" dtree/keep.txt dtree/changes.txt dtree/removed.txt dtree
+tar --format=gnu -cf old.tar dtree 2>/dev/null
+
+echo "a much longer replacement" > dtree/changes.txt
+rm dtree/removed.txt
+echo "new" > dtree/added.txt
+chmod 600 dtree/keep.txt
+touch -d "@1700000000" dtree/changes.txt dtree/added.txt dtree/keep.txt dtree
+tar --format=gnu -cf new.tar dtree 2>/dev/null
+
+out="$("$TMD" -f old.tar -f new.tar --diff 2>/dev/null)"
+check_contains "--diff reports an added member" "$out" "+ dtree/added.txt"
+check_contains "--diff reports a removed member" "$out" "- dtree/removed.txt"
+check_contains "--diff names the field that changed" "$out" "size 6 -> 26"
+check_contains "--diff notices a mode change" "$out" "mode 0664 -> 0600"
+
+# Sorted by path, so a comparison can be diffed against itself.
+first="$("$TMD" -f old.tar -f new.tar --diff 2>/dev/null | sed -n '3p')"
+check_contains "--diff output is ordered by path" "$first" "dtree/added.txt"
+
+"$TMD" -f old.tar -f new.tar --diff > /dev/null 2>&1
+check_status "archives that differ exit 5" "$?" 5
+"$TMD" -f old.tar -f old.tar --diff > /dev/null 2>&1
+check_status "identical archives exit 0" "$?" 0
+
+# The comparison must be symmetric: what is added one way is removed the other.
+a="$("$TMD" -f old.tar -f new.tar --diff 2>/dev/null | grep -c '^+')"
+b="$("$TMD" -f new.tar -f old.tar --diff 2>/dev/null | grep -c '^-')"
+check "added one way is removed the other" "$a" "$b"
+
+"$TMD" -f old.tar --diff > /dev/null 2>&1
+check_status "--diff with one archive is a usage error" "$?" 2
+
+if command -v python3 > /dev/null 2>&1; then
+  matched="$("$TMD" -f old.tar -f new.tar --diff -t JSON 2>/dev/null | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["diff"]["matches"])' 2>/dev/null)"
+  check "--diff reports a verdict in JSON" "$matched" "False"
+fi
+
+# ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ --verify\033[0m\n'
+
+# A manifest tmd can produce itself, which is the round trip that matters.
+"$TMD" -f old.tar -t CSV 2>/dev/null | tail -n +2 | awk -F, '{print $10, $1}' > man.txt
+"$TMD" -f old.tar --verify=man.txt > /dev/null 2>&1
+check_status "an archive verifies against its own manifest" "$?" 0
+
+{ echo "# a comment"; echo ""; echo "999 dtree/keep.txt"; echo "- dtree/changes.txt";
+  echo "0 dtree/never-was.txt"; } > bad.txt
+out="$("$TMD" -f old.tar --verify=bad.txt 2>/dev/null)"
+check_contains "--verify reports a wrong size in its own words" "$out" \
+               "size 999 expected"
+check_contains "--verify reports a missing member" "$out" "dtree/never-was.txt"
+check_contains "--verify reports an unexpected member" "$out" "not expected"
+"$TMD" -f old.tar --verify=bad.txt > /dev/null 2>&1
+check_status "a manifest that disagrees exits 5" "$?" 5
+
+# "-" means the path is expected and its size is not being checked.
+#
+# Asserted on the member's own line rather than by grepping the whole report
+# for "size": the first version did that, and matched the report's own header,
+# because the fixture was called sizeless.txt.
+printf -- '- dtree/keep.txt\n' > nosize.txt
+out="$("$TMD" -f old.tar --verify=nosize.txt 2>/dev/null)"
+if printf '%s' "$out" | grep -q '^~ dtree/keep.txt'; then
+  bad "a sizeless manifest line still checked the size"
+else
+  ok "a sizeless manifest line checks only that the path is there"
+fi
+
+# A line too long to fit must not be split into two plausible-looking paths.
+{ printf '0 dtree/keep.txt\n'; printf '5 '; printf 'x%.0s' $(seq 1 9000);
+  printf '\n'; } > longline.txt
+err="$("$TMD" -f old.tar --verify=longline.txt 2>&1 >/dev/null)"
+check_contains "an over-long manifest line is refused, not split" "$err" \
+               "longer than"
+
+"$TMD" -f old.tar --verify=/nonexistent/manifest > /dev/null 2>&1
+check_status "a missing manifest is a read error, not a mismatch" "$?" 1
+"$TMD" -f old.tar -f new.tar --verify=man.txt > /dev/null 2>&1
+check_status "--verify with two archives is a usage error" "$?" 2
+
+# ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ member order and top-level entries\033[0m\n'
+
+out="$("$TMD" -f gnu.tar -i 2>/dev/null)"
+check_contains "the info report names the member order" "$out" "member order"
+check_contains "and what extracting would create" "$out" "top level"
+
+# An archive that unpacks many entries into the current directory — the older
+# meaning of "tar bomb", and a different question from a path that escapes.
+for i in 1 2 3 4 5 6 7 8 9 10; do echo x > "scatter$i.txt"; done
+tar --format=gnu -cf scatter.tar scatter*.txt 2>/dev/null
+out="$("$TMD" -f scatter.tar -i 2>/dev/null)"
+check_contains "many top-level entries are called out" "$out" \
+               "scatters them into the current directory"
+
+# A file list carries no directory members, which a directory walk always does.
+find tree -type f | LC_ALL=C sort > flist.txt
+tar --format=gnu --no-recursion -cf flist.tar -T flist.txt 2>/dev/null
+out="$("$TMD" -f flist.tar -i 2>/dev/null)"
+check_contains "no directory members reads as a file list" "$out" \
+               "written from a list of files"
+
+# Sorted and reversed inputs, with recursion off so the order is exactly the
+# list's. This is the check that the ordering test is measuring the archive and
+# not tar's traversal.
+find tree | LC_ALL=C sort > asc.txt
+find tree | LC_ALL=C sort -r > desc.txt
+tar --format=gnu --no-recursion -cf asc.tar -T asc.txt 2>/dev/null
+tar --format=gnu --no-recursion -cf desc.tar -T desc.txt 2>/dev/null
+out="$("$TMD" -f asc.tar -i 2>/dev/null)"
+check_contains "a sorted archive is reported sorted" "$out" "lexicographic by path"
+out="$("$TMD" -f desc.tar -i 2>/dev/null)"
+check_contains "a reversed archive is reported unsorted" "$out" "not in path order"
+
+# ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ raw extension blocks\033[0m\n'
+
+# The claim -R makes is that the JSON accounts for every byte a member occupies.
+# That is checkable: each captured block must equal the archive at its offset,
+# and the captured count plus the member's own header must equal the member's
+# header_blocks.
+if command -v python3 > /dev/null 2>&1; then
+  for archive in gnu.tar posix.tar; do
+    verdict="$("$TMD" -f "$archive" -R -t JSON 2>/dev/null | python3 -c "
+import json, sys, base64, pathlib
+d = json.load(sys.stdin)
+blob = pathlib.Path('$archive').read_bytes()
+for e in d['entries']:
+    raw = e.get('raw', {})
+    ext = raw.get('extension_blocks', [])
+    if base64.b64decode(raw['block_base64']) != blob[raw['block_offset']:raw['block_offset'] + 512]:
+        print('member header not byte-exact'); sys.exit()
+    for x in ext:
+        if base64.b64decode(x['base64']) != blob[x['offset']:x['offset'] + 512]:
+            print('extension block not byte-exact'); sys.exit()
+    if len(ext) + 1 != e['blocks']['header_blocks']:
+        print('blocks unaccounted for'); sys.exit()
+print('accounted')" 2>/dev/null)"
+    check "$archive: every header block is accounted for byte for byte" \
+          "$verdict" "accounted"
+  done
+
+  # A GNU long name occupies three header blocks: the 'L' header, the name it
+  # carries, and the member's own header. Two of those are extension blocks.
+  kinds="$("$TMD" -f gnu.tar -R -t JSON 2>/dev/null | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+for e in d["entries"]:
+    ext = e.get("raw", {}).get("extension_blocks", [])
+    if len(ext) == 2:
+        print("".join(x["kind"] or "-" for x in ext)); break' 2>/dev/null)"
+  check "a long-name member carries an 'L' header and its payload" "$kinds" "L-"
+fi
+
+# Without -R there is nothing to report and nothing is paid for it.
+if "$TMD" -f gnu.tar -t JSON 2>/dev/null | grep -q 'extension_blocks'; then
+  bad "extension blocks were emitted without -R"
+else
+  ok "extension blocks are only emitted under -R"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ extraction safety\033[0m\n'
 
 # An archive that would write outside the directory it is unpacked in. Built

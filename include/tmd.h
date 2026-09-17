@@ -192,6 +192,26 @@ struct tmd_warning {
     char       *text;
 };
 
+/*
+ * One 512-byte block of a member's extension headers, kept verbatim.
+ *
+ * A member with a GNU 'L' long name occupies three blocks: the 'L' header, the
+ * name it carries, then the member's own header. A pax member occupies the 'x'
+ * header, its records, and then its own. `raw.block_base64` reproduces only the
+ * last of those -- the one the decoded fields came from -- so the rest were
+ * described by their effects and not by their bytes.
+ *
+ * `kind` is the typeflag of the header that introduced the block ('L', 'K',
+ * 'x', 'g'), or '\0' for one of the data blocks that follow it. The padding at
+ * the end of a payload is included, deliberately: it is the one place in an
+ * archive where bytes can sit that no field accounts for.
+ */
+struct tmd_raw_block {
+    uint64_t      offset;
+    char          kind;
+    unsigned char bytes[TMD_BLOCK_SIZE];
+};
+
 struct tmd_entry {
     char *path;
     char *linkpath;
@@ -215,6 +235,22 @@ struct tmd_entry {
     struct tmd_time mtime;
     struct tmd_time atime;
     struct tmd_time ctime;
+    /*
+     * When the file was created, if the archive says so.
+     *
+     * Only libarchive writes this, as the pax attribute
+     * LIBARCHIVE.creationtime, and only under two conditions that are easy to
+     * miss: the birth time must be EARLIER than the modification time (so a
+     * file created now and back-dated with touch never gets one), and the
+     * platform must fill struct stat.st_birthtime -- which FreeBSD, macOS and
+     * NetBSD do and Linux does not. libarchive's disk reader never calls
+     * statx(STATX_BTIME), so bsdtar on Linux silently never writes it while
+     * bsdtar on a Mac does. GNU tar never writes it anywhere.
+     *
+     * So this is usually absent, and when it is present it came from a Mac or a
+     * BSD and is worth showing plainly rather than as a raw attribute.
+     */
+    struct tmd_time created;
 
     bool     has_dev;
     uint32_t devmajor;
@@ -258,6 +294,17 @@ struct tmd_entry {
     size_t              nwarnings;
 
     struct tmd_raw raw;
+
+    /*
+     * The extension header blocks, when -R asked for them.
+     *
+     * Bounded: a pax header is as large as its writer chose, and an archive is
+     * a thing somebody else wrote. Past the cap the list stops and
+     * ext_truncated says so, rather than a report turning into an allocation.
+     */
+    struct tmd_raw_block *ext_blocks;
+    size_t                n_ext_blocks;
+    bool                  ext_truncated;
 };
 
 /*
@@ -301,6 +348,26 @@ struct tmd_features {
     uint64_t subsecond_times;   /* members with nanosecond precision           */
     uint64_t atime_present;
     uint64_t ctime_present;
+    uint64_t created_present;   /* LIBARCHIVE.creationtime seen         */
+
+    /*
+     * How the members are ordered, and what extracting them would create.
+     *
+     * Two cheap observations that between them say a lot about how an archive
+     * was built. Lexicographic order means the input was a sorted list -- a
+     * shell glob, or `find | sort`; unsorted with directory members means a
+     * directory walk, which is what `tar -c DIR` does.
+     *
+     * The top-level names answer the older meaning of "tar bomb": an archive
+     * with one top-level directory unpacks into one tidy place, and one with
+     * two hundred scatters them across whatever directory you were standing
+     * in. Tracked up to a handful, because past that the answer is already
+     * "lots".
+     */
+    bool     order_sorted;
+    char     roots[8][64];
+    size_t   nroots;
+    bool     roots_truncated;
     uint64_t names_present;     /* members carrying a uname or gname           */
 
     size_t   max_path;          /* the longest path in the archive             */
@@ -421,6 +488,8 @@ struct tmd_options {
     const char **match;
     size_t       nmatch;
 
+    bool          diff;    /* --diff: compare the two archives given     */
+    const char   *verify;  /* --verify=FILE: check against a manifest    */
     bool          stats;   /* --stat: distributions instead of a listing  */
     enum tmd_sort sort;    /* --sort: order the listing by this          */
     bool          reverse; /* --reverse: and invert it                   */

@@ -18,24 +18,26 @@ asked of a roadmap a year later.
 
 | Item | Status |
 |---|---|
+| [`--diff` between two archives](#--diff-between-two-archives-v1500) | **Shipped** in v1.5.0.0 |
+| [`--verify` against a manifest](#--verify-against-a-manifest-v1500) | **Shipped** in v1.5.0.0 |
+| [Promote `LIBARCHIVE.creationtime` to a `created` line](#promote-libarchivecreationtime-to-a-created-line-v1500) | **Shipped** in v1.5.0.0 |
+| [Report the *order* members appear in](#report-the-order-members-appear-in-v1500) | **Shipped** in v1.5.0.0 |
+| [Reproduce the extension blocks, not just the member header](#reproduce-the-extension-blocks-not-just-the-member-header-v1500) | **Shipped** in v1.5.0.0 |
 | [Detect tar bombs](#detect-tar-bombs-v1400) | **Shipped** in v1.4.0.0 |
 | [A `--stat` mode](#a---stat-mode-v1400) | **Shipped** in v1.4.0.0 |
 | [Find a member by name: `-m` / `--match`](#find-a-member-by-name--m----match-pattern-v1300) | **Shipped** in v1.3.0.0 |
 | [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
-| [Promote `LIBARCHIVE.creationtime` to a `created` line](#other-ideas) | Not started |
-| [Reproduce the extension blocks, not just the member header](#other-ideas) | Not started — follow-up to the JSON work |
-| [`--verify` against a manifest](#other-ideas) | Not started |
 | [Read compressed archives directly](#other-ideas) | Not started |
-| [`--diff` between two archives](#other-ideas) | Not started |
-| [Report the *order* members appear in](#other-ideas) | Not started |
 | [More architectures in CI](#other-ideas) | Not started |
 
-Seven open, five shipped, none declined.
+Two open, ten shipped, none declined.
 
-`-m` and `--sort` went out in v1.3.0.0; tar-bomb detection and `--stat` go out
-in v1.4.0.0. The minor moves each time the command line grows — the rule
-v1.2.0.0 set when `-t` was added.
+The minor moves each time the command line grows — the rule v1.2.0.0 set when
+`-t` was added. v1.5.0.0 adds `--diff` and `--verify`, a new exit status (5),
+and three items that add no switch at all but do add JSON keys. They ship
+together rather than as five releases, because a minor version is the unit being
+spent either way.
 
 ---
 
@@ -43,71 +45,122 @@ v1.2.0.0 set when `-t` was added.
 
 Unordered, and none of them thought through as far as the item above.
 
-- **Promote `LIBARCHIVE.creationtime` to a first-class `created` line.** tmd
-  already prints it, because it prints every pax attribute it finds whether or
-  not it acts on one — but as a raw `pax LIBARCHIVE.creationtime = 1789650968`
-  rather than a rendered date beside `modified` and `accessed`.
-
-  This is a real case, not a hypothetical, and it took reading the source to
-  establish. libarchive's pax writer does emit it:
-
-  ```c
-  /* Store birth/creationtime only if it's earlier than mtime */
-  if (archive_entry_birthtime_is_set(entry_main) &&
-      archive_entry_birthtime(entry_main) < archive_entry_mtime(entry_main))
-          add_pax_attr_time(&(pax->pax_header), "LIBARCHIVE.creationtime", ...);
-  ```
-
-  Two conditions gate it, and both are easy to miss. The birth time must be
-  *earlier* than the modification time — so a file created now and back-dated
-  with `touch` never gets one. And `birthtime_is_set()` must be true, which
-  depends on the platform: `archive_entry_copy_stat.c` fills it only from
-  `struct stat.st_birthtime`, which FreeBSD, macOS and NetBSD have and Linux
-  does not. libarchive's disk reader never calls `statx(STATX_BTIME)`, so
-  **bsdtar on Linux silently never writes it** while bsdtar on FreeBSD or macOS
-  does.
-
-  The practical upshot: archives produced on a Mac or a BSD may carry a genuine
-  creation time that tmd currently shows as an unlabelled attribute. GNU tar
-  never writes one on any platform — its whole pax keyword table is `atime
-  comment charset ctime gid gname linkpath mtime path size uid uname` plus the
-  `GNU.*`, `RHT.security.selinux` and `SCHILY.*` extensions, and the string
-  does not appear anywhere in its source.
-
-  Worth rendering as `created` under `-l`, counting under `-i`'s "timestamps"
-  line, and emitting as its own JSON field. Cheap: the value is already parsed
-  and in the pax list, so this is presentation only.
-
-- **Reproduce the extension blocks, not just the member header.** `-R` now emits
-  `raw.block_base64`, the member's own 512-byte header, byte for byte. A member
-  with a GNU `L` long name or a pax `x` header occupies two or three *more*
-  blocks than that, and those are described by their effects — the path, and
-  `path_source` — rather than reproduced. Emitting them too would make the JSON
-  a complete account of every byte a member occupies, which is what "lossless"
-  ought to mean. It needs somewhere to put a variable number of blocks, and a
-  decision about whether a 200-block pax header is something to emit in full.
-
-- **`--verify` against a manifest.** Read a list of expected paths and sizes and
-  report what the archive is missing or has gained. A backup check that does not
-  need extraction.
 - **Read compressed archives directly.** Today a `.tar.gz` is recognized and the
   user is told which command to pipe through. Doing it internally means linking
   zlib, which costs the "libc only" property that keeps the attack surface
   small — so if it happens it should be `dlopen`-on-demand, or a compile-time
   option that is off by default, and never a hard dependency.
-- **`--diff` between two archives.** Which members were added, removed, changed
-  in size, changed in mode, changed in mtime. The schema 2 JSON is the
-  enabler: it already describes each member field by field, so a diff is a
-  comparison of two documents rather than a second parser.
-- **Report the *order* members appear in.** A tar written by `find | tar -T -`
-  has a different ordering fingerprint from one written by `tar -c dir`, which
-  is occasionally the only clue about how an archive was made.
 - **More architectures in CI.** The code is endian-clean by construction (every
   field is parsed byte by byte) but nothing proves it. A `qemu`-based
   big-endian leg would.
 ---
 
 ## Shipped
+
+### `--diff` between two archives (v1.5.0.0)
+
+**What shipped:** `tmd -f old.tar -f new.tar --diff`, reporting added, removed
+and changed members with the fields that differ — size, mode, mtime, kind and a
+link's target — always ordered by path so a comparison can be diffed against
+itself. Exit 5 when they differ.
+
+**The sketch's premise turned out not to be the right build.** It said "the
+schema 2 JSON is the enabler: a diff is a comparison of two documents rather
+than a second parser". Comparing two rendered documents would have meant
+building both in full, in memory, and then parsing them back — for an operation
+whose second side only ever needs to look its own path up. What shipped indexes
+the first archive and *streams* the second past it, keeping a digest of the
+compared fields rather than whole entries. The JSON did enable this, but as the
+thing that settled which fields are worth comparing, not as an intermediate
+format.
+
+`--verify` shares the machine underneath, which is what made it cheap.
+
+### `--verify` against a manifest (v1.5.0.0)
+
+**What shipped:** `--verify=FILE`, checking an archive against a list of
+expected `SIZE PATH` lines, where `SIZE` may be `-` for "this path should be
+here and I am not saying how big it is". Comments and blank lines are ignored.
+Exit 5 on any disagreement.
+
+tmd can produce a manifest from an archive it has read, so the round trip is a
+one-liner with awk, and the format is simple enough that anything else can
+produce one too.
+
+Two decisions the sketch did not raise:
+
+- **Its own wording.** A diff runs left to right in time, so "size 6 -> 26"
+  reads correctly; a verify checks reality against a claim, where "size 999
+  expected, 3 found" is what a person means. The JSON keys follow: `from`/`to`
+  for a diff, `expected`/`found` for a verify.
+- **An over-long line is refused, not split.** fgets hands the remainder back as
+  the next line, which would turn one absurd path into two plausible-looking
+  ones — a silently wrong answer from a file the caller may not have written.
+  The clang analyzer's taint warning on the manifest path is what sent me
+  looking for it.
+
+### Promote `LIBARCHIVE.creationtime` to a `created` line (v1.5.0.0)
+
+**What shipped:** a `created` line under `-l`, a mention on the `-i` timestamps
+line, and `created` / `created_epoch` / `created_source` in the JSON. The value
+was already parsed and in the pax list, so this was presentation, as predicted.
+
+Only `LIBARCHIVE.creationtime` is accepted. star's and GNU's keyword tables were
+checked and neither has a birth-time key, so a second spelling would mean
+rendering a field no writer produces. The `-i` line says where a creation time
+comes from — "written by libarchive on a BSD or a Mac" — because that is the
+part a reader cannot guess: the platform gate means bsdtar on Linux never writes
+one.
+
+### Report the *order* members appear in (v1.5.0.0)
+
+**What shipped:** a `member order` line (lexicographic, or not in path order)
+and a `top level` line naming what extracting would create, both in the summary
+and the `-i` report, plus an `order` object in the JSON.
+
+**The sketch asked for a fingerprint identifying the writer, and that turned out
+not to be sound.** The first implementation claimed "lexicographic, so it came
+from a sorted list" and "unsorted with directories, so it was a directory walk".
+Both were caught being wrong while being tested: `tar -c DIR` over a small tree
+came out in exact lexicographic order because readdir returned it that way, and
+a reverse-sorted file list came out unsorted with directory members present. So
+the ordering is reported as an observation and the reader draws their own
+conclusion.
+
+One inference does follow and is stated: no directory members means a list of
+files, because a directory walk emits the directories it walks through.
+
+The `top level` line was not in the sketch and is the more useful half. It
+answers the *older* sense of "tar bomb" — an archive that unpacks two hundred
+entries into the current directory rather than one tidy one — which is a
+different question from the path escapes shipped in v1.4.0.0 and sits naturally
+beside them.
+
+### Reproduce the extension blocks, not just the member header (v1.5.0.0)
+
+**What shipped:** `raw.extension_blocks` under `-R`, each entry carrying the
+block's offset, the typeflag of the header that introduced it (`L`, `K`, `x`,
+`g`, or null for one of its payload blocks), and its 512 bytes as base64 —
+payload padding included, because that is the one place in an archive where
+bytes can sit that no field accounts for.
+
+The JSON now accounts for every byte a member occupies, and the claim is
+enforced rather than asserted: a test decodes every block, compares it against
+the archive at its own offset, and checks that the captured count plus the
+member's own header equals `blocks.header_blocks`. It runs over GNU and pax
+archives, and passed on bsdtar's too.
+
+The open questions, answered:
+
+- *Where to put a variable number of blocks?* A fixed array of 32 per member,
+  with `extension_blocks_truncated` when it was cut. A pax header is as large as
+  its writer chose.
+- *Is a 200-block pax header something to emit in full?* No. 32 blocks is 16KB
+  and covers every long name and pax header a real writer produces.
+- The reader does not keep the blocks at all unless `-R` asked for them, which
+  also decided a thing the sketch did not raise: capturing means *reading* the
+  payload padding where the normal path seeks past it, so the default path is
+  left exactly as it was.
 
 ### Detect tar bombs (v1.4.0.0)
 

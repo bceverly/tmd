@@ -18,6 +18,8 @@ enum {
     OPT_FORMAT = 1000,
     OPT_SORT,
     OPT_STAT,
+    OPT_DIFF,
+    OPT_VERIFY,
     OPT_REVERSE,
     OPT_COLOR
 };
@@ -174,6 +176,8 @@ void tmd_print_usage(FILE *out)
                   "--check found damage: a bad checksum or a truncated archive");
     (void)fprintf(out, "  %-24s %s\n", "4",
                   "--match was given and no member matched");
+    (void)fprintf(out, "  %-24s %s\n", "5",
+                  "--diff or --verify found differences");
 
     (void)fprintf(out, "\nExamples:\n");
     (void)fprintf(out, "  %-38s %s\n", "tmd -f archive.tar",
@@ -370,6 +374,12 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
                                  "path, size, mtime or offset", optarg);
             }
             break;
+        case OPT_DIFF:
+            cli->options.diff = true;
+            break;
+        case OPT_VERIFY:
+            cli->options.verify = optarg;
+            break;
         case OPT_STAT:
             cli->options.stats = true;
             break;
@@ -433,6 +443,23 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
                              "(gzip -dc a.tar.gz | tmd)");
         }
         cli->files[cli->nfiles++] = "-";
+    }
+
+    /*
+     * The two comparisons need a specific number of archives, and saying so
+     * here beats discovering it halfway through reading one.
+     */
+    if (cli->options.diff && cli->options.verify) {
+        return bad_usage("--diff and --verify are different comparisons; "
+                         "pick one");
+    }
+    if (cli->options.diff && cli->nfiles != 2) {
+        return bad_usage("--diff compares two archives, given with -f; "
+                         "%zu given", cli->nfiles);
+    }
+    if (cli->options.verify && cli->nfiles != 1) {
+        return bad_usage("--verify checks one archive against a manifest; "
+                         "%zu archives given", cli->nfiles);
     }
 
     /*

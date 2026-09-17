@@ -31,6 +31,15 @@
  * apart. Additive -- nothing that existed before can return it.
  */
 #define TMD_EXIT_NOMATCH 4
+/*
+ * --diff or --verify found a difference.
+ *
+ * Its own status, for the same reason 4 is: "I compared them and they are not
+ * the same" is an answer, not a failure, and a script has to be able to tell it
+ * from "I could not read the archive". diff(1) uses 1 for this, which is
+ * already taken here by the unreadable case.
+ */
+#define TMD_EXIT_DIFFER  5
 
 /* What the command line asked for. `files` points into argv and is not owned. */
 struct tmd_cli {

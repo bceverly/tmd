@@ -16,6 +16,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "compare.h"
 #include "opts.h"
 #include "render.h"
 #include "source.h"
@@ -81,6 +82,9 @@ static int dump_archive(const char *path, struct tmd_render *rd,
     }
 
     reader = tmd_reader_new(src);
+    /* -R reports the raw blocks, so the reader has to keep them; nothing else
+     * pays for that. */
+    tmd_reader_capture_raw(reader, opt->headers);
     archive = tmd_reader_archive(reader);
     tmd_render_archive_begin(rd, archive);
 
@@ -173,6 +177,30 @@ int main(int argc, char **argv)
             tmd_free_args(&cli);
             return TMD_EXIT_ERROR;
         }
+    }
+
+    /*
+     * The comparisons take a different shape from everything else: they read
+     * two things and report on the pair, rather than reporting on each archive
+     * in turn. So they run instead of the loop below, not inside it.
+     */
+    if (cli.options.diff || cli.options.verify) {
+        if (cli.options.diff) {
+            status = tmd_diff_archives(cli.files[0], cli.files[1], out,
+                                       &cli.options);
+        } else {
+            status = tmd_verify_archive(cli.files[0], cli.options.verify, out,
+                                        &cli.options);
+        }
+        if (fflush(out) != 0 || (cli.output_path && fclose(out) != 0)) {
+            (void)fprintf(stderr, "tmd: %s: %s\n",
+                          cli.output_path ? cli.output_path
+                                          : "(standard output)",
+                          strerror(errno));
+            status = TMD_EXIT_ERROR;
+        }
+        tmd_free_args(&cli);
+        return status;
     }
 
     rd = tmd_render_new(out, &cli.options, (int)cli.nfiles);

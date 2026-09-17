@@ -38,6 +38,10 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out);
  * next call needs a clone. Used by --sort, which cannot order a listing it has
  * not finished reading.
  */
+/* -R: keep each member's extension header blocks (GNU 'L'/'K', pax 'x'/'g')
+ * and their payload blocks verbatim, padding included. Off by default. */
+void tmd_reader_capture_raw(struct tmd_reader *r, bool on);
+
 struct tmd_entry *tmd_entry_clone(const struct tmd_entry *e);
 void              tmd_entry_free(struct tmd_entry *e);
 

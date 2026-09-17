@@ -41,4 +41,14 @@ char *tmd_render_listing_line(const struct tmd_entry *e,
                               const struct tmd_options *opt);
 void tmd_json_escape(struct tmd_buf *b, const char *s);
 
+/*
+ * The program's one timestamp formatter, honoring -L/-u and -T.
+ *
+ * Exported so that --diff renders "mtime A -> B" exactly as a listing would
+ * render either one on its own. A comparison that formatted times differently
+ * from the listing it is comparing would be its own small lie.
+ */
+void tmd_render_time(const struct tmd_time *t, const struct tmd_options *opt,
+                     char *buf, size_t bufsz);
+
 #endif /* TMD_RENDER_H */

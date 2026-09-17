@@ -318,6 +318,12 @@ static const char *entry_color(const struct tmd_entry *e,
  * push the line out rather than being truncated — a wrong number is worse than
  * a ragged column.
  */
+void tmd_render_time(const struct tmd_time *t, const struct tmd_options *opt,
+                     char *buf, size_t bufsz)
+{
+    format_time(t, opt, buf, bufsz);
+}
+
 char *tmd_render_listing_line(const struct tmd_entry *e,
                               const struct tmd_options *opt)
 {
@@ -816,6 +822,14 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
             tmd_buf_addf(&b, ", \"ctime_source\": \"%s\"", e->ctime.source);
         }
     }
+    if (e->created.present) {
+        format_time_iso(&e->created, stamp, sizeof(stamp));
+        tmd_buf_addf(&b, ", \"created\": \"%s\"", stamp);
+        tmd_buf_addf(&b, ", \"created_epoch\": %lld", (long long)e->created.sec);
+        if (e->created.source) {
+            tmd_buf_addf(&b, ", \"created_source\": \"%s\"", e->created.source);
+        }
+    }
 
     if (e->path_source) {
         tmd_buf_addf(&b, ", \"path_source\": \"%s\"", e->path_source);
@@ -932,6 +946,34 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
                          (unsigned long long)block_offset);
             tmd_buf_addf(&b, ", \"block_base64\": \"%s\"", encoded);
             free(encoded);
+        }
+
+        /*
+         * The blocks before it: the 'L'/'K'/'x'/'g' headers and their payloads,
+         * padding included. With these the JSON accounts for every byte the
+         * member occupies, which is what the raw object was always trying to
+         * be -- `block_base64` alone described the last block and left the two
+         * or three before it to be inferred from their effects.
+         */
+        if (e->n_ext_blocks > 0) {
+            tmd_buf_addstr(&b, ", \"extension_blocks\": [");
+            for (i = 0; i < e->n_ext_blocks; i++) {
+                char *enc = tmd_base64_encode(e->ext_blocks[i].bytes,
+                                              sizeof(e->ext_blocks[i].bytes));
+
+                tmd_buf_addf(&b, "%s{\"offset\": %llu, \"kind\": ", i ? ", " : "",
+                             (unsigned long long)e->ext_blocks[i].offset);
+                if (e->ext_blocks[i].kind) {
+                    tmd_buf_addf(&b, "\"%c\"", e->ext_blocks[i].kind);
+                } else {
+                    /* A payload block of the header above it, not a header. */
+                    tmd_buf_addstr(&b, "null");
+                }
+                tmd_buf_addf(&b, ", \"base64\": \"%s\"}", enc);
+                free(enc);
+            }
+            tmd_buf_addf(&b, "], \"extension_blocks_truncated\": %s",
+                         e->ext_truncated ? "true" : "false");
         }
         tmd_buf_addc(&b, '}');
     }
@@ -1067,6 +1109,10 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
     if (e->ctime.present) {
         format_time(&e->ctime, opt, stamp, sizeof(stamp));
         (void)fprintf(out, "  changed     %s\n", stamp);
+    }
+    if (e->created.present) {
+        format_time(&e->created, opt, stamp, sizeof(stamp));
+        (void)fprintf(out, "  created     %s\n", stamp);
     }
 
     if (e->linkpath && e->linkpath[0]) {
@@ -1273,6 +1319,64 @@ static void print_portability(FILE *out, const struct tmd_archive *a)
  * two members".
  */
 /*
+ * How the members are ordered, and what extracting them would create.
+ *
+ * Reported as observations, and deliberately not as a guess about which
+ * command wrote the archive. The first draft here did guess -- "lexicographic,
+ * so it came from a sorted list" and "unsorted with directories, so it was a
+ * directory walk" -- and both were caught being wrong within minutes of being
+ * written: `tar -c DIR` over a small tree came out in exact lexicographic order
+ * because readdir happened to return it that way, and a reverse-sorted file
+ * list came out unsorted with directories present. The ordering is a clue, and
+ * a clue is what it is reported as.
+ *
+ * One inference IS sound and is stated: an archive with no directory members
+ * was written from a list of files, because a directory walk emits the
+ * directories it walks through unless it was told not to.
+ *
+ * The top-level count answers the older sense of "tar bomb" -- not a path that
+ * escapes, but an archive that unpacks two hundred entries into whatever
+ * directory you happened to be standing in.
+ */
+static void print_order(FILE *out, const struct tmd_archive *a, int width)
+{
+    const struct tmd_features *f = &a->features;
+    bool has_dirs = a->counts[TMD_KIND_DIR] > 0;
+
+    if (a->entries < 2) {
+        return; /* one member is in every order at once */
+    }
+
+    (void)fprintf(out, "  %-*s%s%s\n", width, "member order",
+                  f->order_sorted ? "lexicographic by path"
+                                  : "not in path order",
+                  has_dirs ? ""
+                           : "; no directory members, so it was written from a "
+                             "list of files");
+
+    if (f->nroots == 1 && !f->roots_truncated) {
+        (void)fprintf(out, "  %-*sone entry: %s\n", width, "top level",
+                      f->roots[0]);
+    } else if (f->roots_truncated) {
+        (void)fprintf(out, "  %-*smore than %zu entries — extracting scatters "
+                           "them into the current directory\n",
+                      width, "top level",
+                      sizeof(f->roots) / sizeof(f->roots[0]));
+    } else {
+        struct tmd_buf list;
+        size_t         i;
+
+        tmd_buf_init(&list);
+        for (i = 0; i < f->nroots; i++) {
+            tmd_buf_addf(&list, "%s%s", list.len ? ", " : "", f->roots[i]);
+        }
+        (void)fprintf(out, "  %-*s%zu entries: %s\n", width, "top level",
+                      f->nroots, list.data ? list.data : "");
+        tmd_buf_free(&list);
+    }
+}
+
+/*
  * The extraction-safety verdict, as a class.
  *
  * Stated even when it is clean, which is unusual for this report -- most lines
@@ -1450,10 +1554,12 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     }
     (void)fputc('\n', out);
 
-    (void)fprintf(out, "  timestamps       mtime%s%s%s\n",
+    (void)fprintf(out, "  timestamps       mtime%s%s%s%s\n",
                   f->subsecond_times ? " to nanosecond precision" : " to the second",
                   f->atime_present ? ", atime" : "",
-                  f->ctime_present ? ", ctime" : "");
+                  f->ctime_present ? ", ctime" : "",
+                  f->created_present ? ", creation time (written by libarchive "
+                                       "on a BSD or a Mac)" : "");
 
     (void)fprintf(out, "  ownership        %s; highest uid %lld, gid %lld\n",
                   f->names_present ? "names and numbers" : "numbers only (no names stored)",
@@ -1554,6 +1660,7 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     }
 
     print_extraction(out, a, 17);
+    print_order(out, a, 17);
 
     print_portability(out, a);
 
@@ -1656,6 +1763,7 @@ static void text_summary(struct tmd_render *rd, const struct tmd_archive *a)
     }
 
     print_extraction(out, a, 14);
+    print_order(out, a, 14);
 
     if (a->npax_global) {
         size_t k;
@@ -1726,6 +1834,20 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
                      (unsigned long long)ef->escape_traversal);
         tmd_buf_addf(&b, ", \"links_outside\": %llu}",
                      (unsigned long long)ef->escape_link);
+
+        tmd_buf_addf(&b, ", \"order\": {\"sorted\": %s",
+                     ef->order_sorted ? "true" : "false");
+        tmd_buf_addstr(&b, ", \"top_level\": [");
+        {
+            size_t k;
+
+            for (k = 0; k < ef->nroots; k++) {
+                tmd_buf_addstr(&b, k ? ", " : "");
+                tmd_json_escape(&b, ef->roots[k]);
+            }
+        }
+        tmd_buf_addf(&b, "], \"top_level_capped\": %s}",
+                     ef->roots_truncated ? "true" : "false");
     }
 
     if (rd->opt->info) {

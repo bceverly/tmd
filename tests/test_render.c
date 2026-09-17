@@ -979,6 +979,116 @@ static void test_extraction_safety(void)
     free(out);
 }
 
+static void test_created_and_order(void)
+{
+    struct tmd_archive a;
+    struct tmd_entry   e;
+    struct tmd_options opt;
+    char              *out;
+
+    memset(&a, 0, sizeof(a));
+    a.name = (char *)"t.tar";
+    a.format = TMD_FMT_PAX;
+    a.entries = 3;
+
+    /*
+     * Only libarchive writes a creation time, as LIBARCHIVE.creationtime, and
+     * only when it is EARLIER than the mtime. So the value here is earlier --
+     * an archive with a creation time after its modification time is not
+     * something libarchive produces.
+     */
+    TEST_CASE("a creation time renders beside modified under -l");
+    make_entry(&e);
+    e.created.sec = 1500000000;
+    e.created.present = true;
+    e.created.source = "pax LIBARCHIVE.creationtime";
+    default_options(&opt);
+    opt.long_form = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "created     2017-07-14 02:40:00Z");
+    free(out);
+
+    TEST_CASE("and as its own JSON field, with where it came from");
+    default_options(&opt);
+    opt.output = TMD_OUT_JSON;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"created\": \"2017-07-14T02:40:00Z\"");
+    CHECK_CONTAINS(out, "\"created_epoch\": 1500000000");
+    CHECK_CONTAINS(out, "\"created_source\": \"pax LIBARCHIVE.creationtime\"");
+    free(out);
+
+    TEST_CASE("a member without one says nothing about it");
+    make_entry(&e);
+    default_options(&opt);
+    opt.long_form = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK(strstr(out, "created") == NULL);
+    free(out);
+
+    /* --- member order ---------------------------------------------------- */
+    make_entry(&e);
+    a.counts[TMD_KIND_DIR] = 1;
+
+    TEST_CASE("a sorted archive is reported as sorted");
+    a.features.order_sorted = true;
+    a.features.nroots = 1;
+    memcpy(a.features.roots[0], "proj", 5);
+    default_options(&opt);
+    opt.with_summary = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "lexicographic by path");
+    CHECK_CONTAINS(out, "one entry: proj");
+    free(out);
+
+    /*
+     * Reported as an observation, not as a guess about which command wrote it.
+     * `tar -c DIR` over a small tree can come out in exact lexicographic order,
+     * and a reverse-sorted file list comes out unsorted with directories
+     * present, so neither ordering identifies a writer.
+     */
+    TEST_CASE("an unsorted archive is reported without guessing why");
+    a.features.order_sorted = false;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "not in path order");
+    CHECK(strstr(out, "tar -c DIR") == NULL);
+    free(out);
+
+    /* This one does follow: a directory walk emits the directories it walks. */
+    TEST_CASE("no directory members is reported as a file list");
+    a.counts[TMD_KIND_DIR] = 0;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "written from a list of files");
+    free(out);
+
+    TEST_CASE("many top-level entries says extracting scatters them");
+    {
+        size_t i;
+
+        a.features.nroots = 8;
+        a.features.roots_truncated = true;
+        for (i = 0; i < 8; i++) {
+            a.features.roots[i][0] = (char)('a' + i);
+            a.features.roots[i][1] = '\0';
+        }
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "scatters them into the current directory");
+        free(out);
+    }
+
+    TEST_CASE("the order reaches the JSON");
+    a.features.order_sorted = true;
+    a.features.roots_truncated = false;
+    a.features.nroots = 1;
+    memcpy(a.features.roots[0], "proj", 5);
+    default_options(&opt);
+    opt.output = TMD_OUT_JSON;
+    opt.with_summary = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"order\": {\"sorted\": true");
+    CHECK_CONTAINS(out, "\"top_level\": [\"proj\"]");
+    free(out);
+}
+
 void test_render(void)
 {
     test_listing_line();
@@ -989,4 +1099,5 @@ void test_render(void)
     test_match_and_sort();
     test_stat_mode();
     test_extraction_safety();
+    test_created_and_order();
 }

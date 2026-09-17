@@ -92,6 +92,14 @@ struct tmd_reader {
     struct tmd_kv *pending_pax;
     size_t         pending_npax;
 
+    /* The previous member's path, to tell whether the archive is in order
+     * without keeping all of them. */
+    char *prev_path;
+
+    /* -R: keep the extension header blocks verbatim. Off by default, because
+     * it costs up to 16KB per member and only -R ever reads it. */
+    bool capture_raw;
+
     /* Where the member being assembled started, so its true cost in the
      * archive can be measured rather than guessed from the size field. */
     uint64_t member_start;
@@ -366,6 +374,7 @@ static void entry_reset(struct tmd_entry *e)
     free(e->uname);
     free(e->gname);
     free(e->sparse);
+    free(e->ext_blocks);
     kv_free(e->pax, e->npax);
     for (i = 0; i < e->nwarnings; i++) {
         free(e->warnings[i].text);
@@ -473,6 +482,32 @@ static bool read_block(struct tmd_reader *r, char block[TMD_BLOCK_SIZE],
  * headers, sparse maps. `cap` is the ceiling above which we refuse rather than
  * allocate — see the MAX_* constants.
  */
+/* How many extension blocks to keep per member, when -R asks. 32 blocks is
+ * 16KB, which covers every long name and every pax header a real writer
+ * produces; beyond that the reader is told the list was cut. */
+#define MAX_RAW_EXT_BLOCKS 32
+
+static void capture_block(struct tmd_reader *r, char kind,
+                          const char *bytes, uint64_t offset)
+{
+    struct tmd_entry *e = &r->entry;
+
+    if (!r->capture_raw) {
+        return;
+    }
+    if (e->n_ext_blocks >= MAX_RAW_EXT_BLOCKS) {
+        e->ext_truncated = true;
+        return;
+    }
+    if (!e->ext_blocks) {
+        e->ext_blocks = tmd_xcalloc(MAX_RAW_EXT_BLOCKS, sizeof(*e->ext_blocks));
+    }
+    e->ext_blocks[e->n_ext_blocks].offset = offset;
+    e->ext_blocks[e->n_ext_blocks].kind = kind;
+    memcpy(e->ext_blocks[e->n_ext_blocks].bytes, bytes, TMD_BLOCK_SIZE);
+    e->n_ext_blocks++;
+}
+
 static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
                           size_t *out_len, const char *what)
 {
@@ -489,6 +524,61 @@ static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
     }
 
     buf = tmd_xmalloc((size_t)want + 1);
+
+    /*
+     * Two ways to read the same bytes.
+     *
+     * Normally the wanted part is read and the rest skipped, which is one read
+     * and one seek. Under -R the payload is read a block at a time instead, so
+     * every byte it occupies -- including the padding, which no field accounts
+     * for and which is therefore the one place bytes can hide -- can be
+     * reported verbatim. The skipping path is left exactly as it was: it is the
+     * one every run takes.
+     */
+    if (r->capture_raw) {
+        uint64_t done = 0;
+
+        got = 0;
+        while (done < padded) {
+            char     blk[TMD_BLOCK_SIZE];
+            uint64_t at = tmd_source_offset(r->src);
+            size_t   n = tmd_source_read(r->src, blk, sizeof(blk));
+
+            if (n != sizeof(blk)) {
+                /* Short: keep whatever arrived of the wanted part. */
+                if (done < want) {
+                    size_t take = (size_t)(want - done);
+
+                    if (take > n) {
+                        take = n;
+                    }
+                    memcpy(buf + done, blk, take);
+                    got = (size_t)done + take;
+                }
+                buf[got] = '\0';
+                *out_len = got;
+                warn_archive(r, "extension-header-truncated",
+                             "%s is truncated: wanted %llu bytes, got %zu",
+                             what, (unsigned long long)want, got);
+                return buf;
+            }
+            capture_block(r, '\0', blk, at);
+            if (done < want) {
+                size_t take = (size_t)(want - done);
+
+                if (take > TMD_BLOCK_SIZE) {
+                    take = TMD_BLOCK_SIZE;
+                }
+                memcpy(buf + done, blk, take);
+                got = (size_t)done + take;
+            }
+            done += TMD_BLOCK_SIZE;
+        }
+        buf[got] = '\0';
+        *out_len = got;
+        return buf;
+    }
+
     got = tmd_source_read(r->src, buf, (size_t)want);
     buf[got] = '\0';
     *out_len = got;
@@ -953,6 +1043,16 @@ static void apply_pax(struct tmd_reader *r, struct tmd_entry *e)
         e->ctime.source = "pax ctime";
     }
     /*
+     * The one spelling libarchive actually writes. star's and GNU's keyword
+     * tables were checked and neither has a birth-time key, so nothing else is
+     * accepted here -- guessing at a second spelling would mean rendering a
+     * field no writer produces.
+     */
+    v = kv_get(e->pax, e->npax, "LIBARCHIVE.creationtime");
+    if (v != NULL && parse_pax_time(v, &e->created)) {
+        e->created.source = "pax LIBARCHIVE.creationtime";
+    }
+    /*
      * Writer fingerprints.
      *
      * Only keys that one implementation alone emits count. GNU.sparse.* looks
@@ -1054,7 +1154,21 @@ struct tmd_reader *tmd_reader_new(struct tmd_source *src)
     r->src = src;
     r->archive.name = tmd_xstrdup(tmd_source_name(src));
     r->archive.file_size = tmd_source_size(src);
+    /* An archive with nothing out of order is in order, so this starts true and
+     * is only ever cleared. An empty archive is trivially sorted. */
+    r->archive.features.order_sorted = true;
     return r;
+}
+
+/*
+ * Ask the reader to keep the extension header blocks verbatim.
+ *
+ * Off by default because it costs a read where a seek would do and up to 16KB
+ * per member, and only -R ever looks at the result.
+ */
+void tmd_reader_capture_raw(struct tmd_reader *r, bool on)
+{
+    r->capture_raw = on;
 }
 
 void tmd_reader_free(struct tmd_reader *r)
@@ -1077,6 +1191,7 @@ void tmd_reader_free(struct tmd_reader *r)
     }
     free(r->archive.warnings);
     free(r->archive.name);
+    free(r->prev_path);
     free(r->error);
     free(r);
 }
@@ -1221,6 +1336,13 @@ struct tmd_entry *tmd_entry_clone(const struct tmd_entry *e)
     c->uname = dup_or_null(e->uname);
     c->gname = dup_or_null(e->gname);
 
+    c->ext_blocks = NULL;
+    if (e->n_ext_blocks > 0) {
+        c->ext_blocks = tmd_xmalloc(e->n_ext_blocks * sizeof(*c->ext_blocks));
+        memcpy(c->ext_blocks, e->ext_blocks,
+               e->n_ext_blocks * sizeof(*c->ext_blocks));
+    }
+
     c->sparse = NULL;
     if (e->nsparse > 0) {
         c->sparse = tmd_xmalloc(e->nsparse * sizeof(*c->sparse));
@@ -1257,6 +1379,57 @@ void tmd_entry_free(struct tmd_entry *e)
      * step with this one. */
     entry_reset(e);
     free(e);
+}
+
+/*
+ * Record the member's top-level name, and whether the archive is still in
+ * lexicographic order.
+ *
+ * Called once per member with the resolved path, so a name that arrived in a
+ * GNU 'L' block or a pax record counts the same as one from the header.
+ */
+static void note_order(struct tmd_reader *r, const struct tmd_entry *e)
+{
+    struct tmd_features *f = &r->archive.features;
+    const char          *slash;
+    size_t               len;
+    size_t               i;
+    char                 root[64];
+
+    if (!e->path || !e->path[0]) {
+        return;
+    }
+
+    if (r->prev_path && strcmp(r->prev_path, e->path) > 0) {
+        f->order_sorted = false;
+    }
+    free(r->prev_path);
+    r->prev_path = tmd_xstrdup(e->path);
+
+    /* The first component. A bare file at the top level is its own root: what
+     * matters is how many things appear in the directory you extract into. */
+    slash = strchr(e->path, '/');
+    len = slash ? (size_t)(slash - e->path) : strlen(e->path);
+    if (len == 0) {
+        return; /* an absolute path; reported as an escape, not as a root */
+    }
+    if (len >= sizeof(root)) {
+        len = sizeof(root) - 1;
+    }
+    memcpy(root, e->path, len);
+    root[len] = '\0';
+
+    for (i = 0; i < f->nroots; i++) {
+        if (strcmp(f->roots[i], root) == 0) {
+            return;
+        }
+    }
+    if (f->nroots < sizeof(f->roots) / sizeof(f->roots[0])) {
+        memcpy(f->roots[f->nroots], root, len + 1);
+        f->nroots++;
+    } else {
+        f->roots_truncated = true;
+    }
 }
 
 int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
@@ -1406,6 +1579,12 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         case 'L':
         case 'K': {
             size_t len;
+
+            /* Nothing has been read since this header block, so the source is
+             * sitting exactly one block past its start. */
+            capture_block(r, e->typeflag, block,
+                          tmd_source_offset(r->src) - TMD_BLOCK_SIZE);
+
             char  *text = read_payload(r, e->data_size, MAX_LONGNAME, &len,
                                        e->typeflag == 'L' ? "GNU long name"
                                                           : "GNU long link name");
@@ -1427,6 +1606,9 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
         case 'x':
         case 'g': {
             size_t len;
+
+            capture_block(r, e->typeflag, block,
+                          tmd_source_offset(r->src) - TMD_BLOCK_SIZE);
 
             /*
              * Which tool wrote this, from the name it gave its own header.
@@ -1700,6 +1882,9 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             if (e->ctime.present) {
                 f->ctime_present++;
             }
+            if (e->created.present) {
+                f->created_present++;
+            }
 
             switch (e->kind) {
             case TMD_KIND_DUMPDIR:  f->dumpdirs++; break;
@@ -1748,6 +1933,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                        "link target leaves the extraction directory: %s",
                        e->linkpath ? e->linkpath : "");
         }
+
+        note_order(r, e);
 
         r->archive.entries++;
         r->archive.total_size += e->size;

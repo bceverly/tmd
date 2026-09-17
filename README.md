@@ -137,6 +137,8 @@ Options:
   -c, --check              check the archive for damage (checksums, truncation); exit 3 on any
   -q, --quiet              do not write warnings about damaged headers to standard error
   -m, --match=PATTERN      show only members matching PATTERN; repeatable. A pattern with a '/' matches the whole path, one without it the basename
+      --diff               compare two archives given with -f and report what changed
+      --verify=FILE        check the archive against a manifest of expected "SIZE PATH" lines
       --stat               report distributions instead of a listing: sizes, padding, and how the archive's timestamps are spread
       --sort=KEY           order the listing by path, size, mtime or offset (reads it all first)
       --reverse            reverse the --sort order
@@ -167,11 +169,11 @@ would rather be explicit.
 
 **Exit status.** `0` the archive was read · `1` it could not be read · `2` the
 command line was wrong · `3` `--check` found damage · `4` `--match` found no
-member. Four distinct failures rather than one, because the difference matters
-to a script: a mistyped flag is the caller's bug, an unreadable archive is the
-file's problem, a bad checksum is a *finding* — the tool worked perfectly and
-the archive is damaged — and "no such member" is not a failure at all, just an
-answer.
+member · `5` `--diff` or `--verify` found differences. Distinct statuses rather
+than one, because the difference matters to a script: a mistyped flag is the
+caller's bug, an unreadable archive is the file's problem, a bad checksum is a
+*finding* — the tool worked perfectly and the archive is damaged — and the last
+two are not failures at all, just answers.
 
 **`-f` and `-o`.** `-f` may be given more than once to read several archives in
 one run; with none given, standard input is read. `-o` redirects the report; warnings about damaged
@@ -300,6 +302,93 @@ Two things worth knowing:
 `-m` and `--sort` compose in the obvious direction: filter first, then order
 what survived.
 
+### `--diff`, what changed between two archives
+
+```console
+$ tmd -f old.tar -f new.tar --diff
+--- old.tar
++++ new.tar
++ tree/added.txt
+~ tree/changes.txt   size 6 -> 26
+~ tree/keep.txt   mode 0664 -> 0600
+- tree/removed.txt
+  3 identical, 2 changed, 1 added, 1 removed
+```
+
+`-` was in the first archive and is not in the second, `+` is the other way
+round, and `~` is in both but not the same — naming the fields that differ:
+size, mode, mtime, kind, and a link's target.
+
+Always ordered by path, whatever order the archives are in, so a comparison can
+be diffed against itself. Identical members are counted, not listed.
+
+**It reads one archive into memory and streams the other past it.** Buffering
+both would cost twice the memory for nothing: the second side only ever needs to
+look its own path up. What is kept per member is a digest of the compared
+fields, not a whole entry — no raw block, no pax list — which on a large archive
+is the difference between tens of megabytes and hundreds.
+
+Duplicated paths follow the same rule as everywhere else in tmd: extraction
+keeps the last one, so the last occurrence is what gets compared, and the report
+says how many paths appeared more than once.
+
+### `--verify`, checking an archive against a manifest
+
+```console
+$ tmd -f backup.tar --verify=manifest.txt
+--- manifest.txt
++++ backup.tar
+~ etc/nginx/nginx.conf   size 2481 expected, 2604 found
+- etc/missing.conf   expected, not in the archive
++ etc/extra.conf   in the archive, not expected
+  559 identical, 1 changed, 1 unexpected, 1 missing
+```
+
+A backup check that never extracts anything.
+
+The manifest is the simplest thing any tool can produce — one member per line,
+`SIZE PATH`, where `SIZE` may be `-` to mean "this path should be here and I am
+not saying how big it is". Blank lines and lines starting with `#` are ignored:
+
+```
+# what the nightly backup should contain
+2481 etc/nginx/nginx.conf
+-    etc/nginx/conf.d/
+```
+
+tmd can produce one from an archive you trust, which makes the round trip a
+one-liner:
+
+```console
+$ tmd -f good.tar -t CSV | tail -n +2 | awk -F, '{print $10, $1}' > manifest.txt
+$ tmd -f suspect.tar --verify=manifest.txt
+```
+
+The first field counts as a size only when it is entirely digits or a single
+`-`. Otherwise the whole line is the path, so a file actually named
+`2481 notes.txt` still works as long as no size is given for it. A line too long
+to fit in the reader is **refused rather than split** — silently turning one
+over-long path into two plausible-looking ones would be a wrong answer from a
+file you may not have written.
+
+### Both report the same way
+
+`-m` narrows what is compared. `-t JSON` gives the whole comparison as a
+document with a `matches` boolean, so a script reads one field:
+
+```console
+$ tmd -f old.tar -f new.tar --diff -t JSON | jq '.diff.matches'
+false
+```
+
+**Exit status 5** means the comparison ran and found differences — distinct from
+`1` (an archive could not be read) and `2` (the command line was wrong).
+`diff(1)` uses `1` for this; that is already taken here by the unreadable case:
+
+```console
+$ tmd -f nightly.tar --verify=manifest.txt || echo "backup does not match"
+```
+
 ### Extraction safety — would this archive escape?
 
 Reported on every run, without being asked, because it is the question somebody
@@ -354,6 +443,34 @@ $ tmd -f untrusted.tar -S -t JSON | jq .summary.extraction
 tmd never extracts anything, so this is pure reporting. It does not refuse, and
 it does not change the exit status.
 
+### Member order, and what extracting would create
+
+```console
+$ tmd -f nginx-1.31.6.tar -i | grep -A1 'member order'
+  member order     lexicographic by path
+  top level        one entry: nginx-1.31.6/
+```
+
+Two observations, reported as observations. The ordering is a clue to how an
+archive was built — a sorted input list looks different from a directory walk —
+but it is **only** a clue, and tmd does not guess a command from it. An earlier
+draft did, claiming "lexicographic, so it came from a sorted list", and it was
+wrong within minutes: `tar -c DIR` over a small tree came out in exact
+lexicographic order because `readdir` happened to return it that way.
+
+One inference does follow and is stated: an archive with **no directory
+members** was written from a list of files, because a directory walk emits the
+directories it walks through unless told otherwise.
+
+The `top level` line answers the older sense of "tar bomb" — not a path that
+escapes, but an archive that unpacks two hundred entries into whatever directory
+you were standing in:
+
+```console
+$ tmd -f scatter.tar -i | grep -A1 'top level'
+  top level        more than 8 entries — extracting scatters them into the current directory
+```
+
 ### `--stat`, what is actually in here
 
 ```console
@@ -407,6 +524,32 @@ Two things worth knowing:
   which a filter cannot change, while a distribution answers "what is in this
   set", which is precisely what a filter selects. The `matched N of M` line
   makes which one you are reading unambiguous.
+
+### `created`, when the archive knows it
+
+```console
+$ tmd -f from-a-mac.tar -l | grep -E 'modified|created'
+  modified    2023-11-14 22:13:20Z
+  created     2023-11-03 08:26:40Z
+```
+
+Usually absent, and worth knowing why. **Only libarchive writes it**, as the pax
+attribute `LIBARCHIVE.creationtime`, and only under two conditions:
+
+- the birth time must be **earlier** than the modification time — so a file
+  created now and back-dated with `touch` never gets one;
+- the platform must fill `struct stat.st_birthtime`, which FreeBSD, macOS and
+  NetBSD do and **Linux does not**. libarchive's disk reader never calls
+  `statx(STATX_BTIME)`, so `bsdtar` on Linux silently never writes it while
+  `bsdtar` on a Mac does.
+
+GNU tar never writes one on any platform. So a `created` line means the archive
+came off a Mac or a BSD — which is itself a fact about its provenance, and the
+reason it is rendered plainly rather than left as a raw attribute.
+
+tmd accepts only that one spelling. star's and GNU's keyword tables have no
+birth-time key, and inventing a second spelling would mean rendering a field no
+writer produces.
 
 ### Timestamps are UTC, and say so
 
@@ -537,10 +680,34 @@ What that buys, field by field:
 | `raw.block_base64` | under `-R`, the member's own 512-byte header, byte for byte, with `raw.block_offset` saying where it is |
 
 `raw.block_offset` is not always `blocks.header_offset`: a member with a GNU `L`
-long name occupies three header blocks, and `raw` describes the last of them.
+long name occupies three header blocks, and `block_base64` is the last of them —
+the one the decoded fields came from.
 
-The base64 block is only emitted under `-R`, because it is 684 characters per
-member and a 200,000-member archive is a normal thing to point this at.
+The **other** blocks are there too, under `raw.extension_blocks`:
+
+```console
+$ tmd -f long-names.tar -R -t JSON | jq '.entries[1].raw.extension_blocks[] | {offset, kind}'
+{ "offset": 512,  "kind": "L" }     # the GNU long-name header
+{ "offset": 1024, "kind": null }    # the name it carries
+```
+
+`kind` is the typeflag of the header that introduced the block (`L`, `K`, `x`,
+`g`), or `null` for one of its payload blocks. The payload's **padding is
+included**, deliberately: it is the one place in an archive where bytes can sit
+that no field accounts for.
+
+With those, the JSON accounts for every byte a member occupies, which is what
+"a faithful description of the bytes" ought to mean. It is checkable, and the
+test suite checks it: each block must equal the archive at its own offset, and
+the captured count plus the member's own header must equal `blocks.header_blocks`.
+
+The list is capped at 32 blocks per member (`extension_blocks_truncated` says
+when it was cut) — a pax header is as large as its writer chose, and an archive
+is a thing somebody else wrote.
+
+Both are emitted only under `-R`. The member header alone is 684 base64
+characters, a 200,000-member archive is a normal thing to point this at, and the
+reader does not even keep the extension blocks unless `-R` asked for them.
 
 A path in a tar archive is a string of bytes with no declared encoding. In JSON,
 paths that are valid UTF-8 are emitted as themselves; anything else is escaped
