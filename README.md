@@ -37,11 +37,13 @@ end-of-archive marker is even there. `tmd` answers both questions: a listing in
 the shape you already know, and a report on the file itself.
 
 ```console
-$ tmd -f backup.tar
--rw-r--r--  bceverly/staff          1234  2026-09-16 14:11  src/main.c
-drwxr-xr-x  bceverly/staff             0  2026-09-16 14:10  src/
-lrwxrwxrwx  bceverly/staff             0  2026-09-16 14:11  bin/tmd -> ../src/tmd
-crw-rw----  root/root                1,3  2026-09-16 14:11  dev/null
+$ gzip -dc attachment.tgz | tmd
+-rw-r--r--  jsmith/staff           18244  2017-01-30 06:15:00Z  docs/old/draft.txt
+-rw-r--r--  jsmith/staff            4096  2019-04-12 14:23:07Z  docs/proposal.doc
+-rw-r--r--  jsmith/staff           92160  2021-11-03 09:01:44Z  docs/budget.xls
+-rw-r--r--  jsmith/staff            1102  2024-07-19 22:58:12Z  docs/notes.txt
+drwxr-xr-x  jsmith/staff               0  2026-09-15 11:40:02Z  docs/
+lrwxrwxrwx  jsmith/staff               0  2024-07-19 22:58:12Z  docs/latest -> notes.txt
 ```
 
 ## Contents
@@ -121,7 +123,8 @@ Usage: tmd -f FILE [OPTION]...
   -S, --with-summary       print the listing and then the summary
   -n, --numeric-owner      show numeric uid/gid instead of the names stored in the archive
   -H, --human              print sizes as 1.4K and 23M rather than in bytes
-  -u, --utc                render timestamps as UTC rather than in local time
+  -L, --local              render timestamps in this machine's zone instead of UTC
+  -u, --utc                render timestamps as UTC (the default; accepted for scripts)
   -T, --full-time          include seconds, nanoseconds and the zone offset in timestamps
   -c, --check              check the archive for damage (checksums, truncation); exit 3 on any
   -q, --quiet              do not write warnings about damaged headers to standard error
@@ -178,12 +181,50 @@ count, which is measured while reading when there is no file to stat.
 
 ### The default listing
 
+```console
+$ gzip -dc attachment.tgz | tmd
+-rw-r--r--  jsmith/staff           18244  2017-01-30 06:15:00Z  docs/old/draft.txt
+-rw-r--r--  jsmith/staff            4096  2019-04-12 14:23:07Z  docs/proposal.doc
+-rw-r--r--  jsmith/staff           92160  2021-11-03 09:01:44Z  docs/budget.xls
+-rw-r--r--  jsmith/staff            1102  2024-07-19 22:58:12Z  docs/notes.txt
+drwxr-xr-x  jsmith/staff               0  2026-09-15 11:40:02Z  docs/
+lrwxrwxrwx  jsmith/staff               0  2024-07-19 22:58:12Z  docs/latest -> notes.txt
+```
+
+One line per member, and the dates are the ones the files carried on the disk
+they came from — not the date the archive was built. Here the tarball was made
+on 2026-09-15 (which is what the *directory* mtime shows, since a directory's
+timestamp moves whenever something is added to it) while the files inside go
+back to 2017.
+
 Nothing but the listing goes to standard output: no banner, no summary unless
 one is asked for, so it pipes into `awk` with nothing to strip. The leading
 character of the mode string comes from the member's *type* rather than from
 the mode word, because a tar header stores no type bits — a directory whose
 type character came from the mode would print as a plain file. A device node
 shows its major and minor numbers where a file shows its size, as `ls` does.
+
+### Timestamps are UTC, and say so
+
+The default rendering is `2019-04-12 14:23:07Z` — to the second, marked UTC.
+
+That is deliberate, for the job this tool is usually doing: an archive arrives
+from somewhere else, and what its timestamps mean is a question about an
+absolute instant, not about the wall clock of whoever is reading it. A bare
+`2019-04-12 10:23` is ambiguous the moment the archive leaves the machine that
+wrote it, and shifts by an hour after a DST change.
+
+Nothing is lost by this. A tar header stores mtime as **seconds since the Unix
+epoch** — an absolute count from `1970-01-01 00:00:00 UTC`. No tar format
+records a timezone, and none needs to: the zone was already applied when the
+filesystem wrote the timestamp, so what is stored is the result. Two files that
+each read `12:32` to their own user, one in New York and one in Los Angeles,
+hold epoch values exactly three hours apart and render here as `16:32:00Z` and
+`19:32:00Z`.
+
+`--local` renders in the reader's zone instead, which is what `tar -tvf` does.
+`-T` adds nanoseconds, which only pax archives carry. `-u` still works and now
+means "yes, really, the default".
 
 ### `-i`, the archive report
 

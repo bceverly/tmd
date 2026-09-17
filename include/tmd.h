@@ -323,7 +323,15 @@ struct tmd_options {
     bool  with_summary; /* -S: the listing and then the summary            */
     bool  numeric;      /* -n: numeric uid/gid even when names exist       */
     bool  human;        /* -H: 1.4K rather than 1434                       */
-    bool  utc;          /* -u: render times as UTC                         */
+    /*
+     * Timestamps are UTC unless this is set.
+     *
+     * The flag is "local", not "utc", so that a zeroed options struct means
+     * UTC — the default a reader wants for an archive that has travelled. A
+     * local-time reading of somebody else's tarball is ambiguous the moment it
+     * leaves the machine that made it, and silently wrong after a DST change.
+     */
+    bool  local;        /* --local: render times in the reader's zone      */
     bool  full_time;    /* -T: seconds, nanoseconds and the zone offset    */
     bool  check;        /* -c: a checksum mismatch is an exit status       */
     bool  quiet;        /* -q: do not write warnings to stderr             */

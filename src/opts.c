@@ -270,7 +270,12 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
             cli->options.human = true;
             break;
         case 'u':
-            cli->options.utc = true;
+            /* Accepted and documented, though UTC is now what you get anyway.
+             * It shipped in v1.0.0.x and somebody's script may pass it. */
+            cli->options.local = false;
+            break;
+        case 'L':
+            cli->options.local = true;
             break;
         case 'T':
             cli->options.full_time = true;

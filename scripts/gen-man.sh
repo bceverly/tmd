@@ -164,19 +164,33 @@ both use:
 .PP
 .RS
 .nf
-\-rw\-r\-\-r\-\-  bceverly/staff          1234  2026\-09\-16 14:11  src/main.c
-drwxr\-xr\-x  bceverly/staff             0  2026\-09\-16 14:10  src/
-lrwxrwxrwx  bceverly/staff             0  2026\-09\-16 14:11  link \-> target
-crw\-rw\-\-\-\-  root/root                1,3  2026\-09\-16 14:11  dev/null
+\-rw\-r\-\-r\-\-  jsmith/staff       18244  2017\-01\-30 06:15:00Z  docs/old/draft.txt
+\-rw\-r\-\-r\-\-  jsmith/staff        4096  2019\-04\-12 14:23:07Z  docs/proposal.doc
+\-rw\-r\-\-r\-\-  jsmith/staff       92160  2021\-11\-03 09:01:44Z  docs/budget.xls
+drwxr\-xr\-x  jsmith/staff           0  2026\-09\-15 11:40:02Z  docs/
+lrwxrwxrwx  jsmith/staff           0  2024\-07\-19 22:58:12Z  docs/latest \-> notes.txt
+crw\-rw\-\-\-\-  root/root           1,3  2026\-09\-15 11:40:02Z  dev/null
 .fi
 .RE
 .PP
+The dates are the ones the files carried on the disk they came from, not the
+date the archive was built \- above, a tarball made on 2026\-09\-15 holding
+files that go back to 2017. A directory's timestamp moves whenever something is
+added to it, so it usually reflects when the archive was staged rather than
+anything about its contents.
+.PP
+Timestamps are rendered in UTC, to the second, with a trailing Z. A tar header
+stores the modification time as seconds since the Unix epoch, which is an
+absolute count from 1970\-01\-01 00:00:00 UTC; no tar format records a
+timezone, and none needs to, because the zone was already applied when the
+filesystem wrote the timestamp. Reading it back in the reader's own zone would
+make the same archive appear to say different things on different machines, so
+.B \-\-local
+is the option rather than the default.
+.PP
 The permission bits are the ones stored in the archive, and the leading
 character comes from the member's type rather than from the mode word, because
-a tar header stores no type bits. The timestamp is the modification time the
-archive recorded, rendered in local time unless
-.B \-\-utc
-is given. A device node shows its major and minor numbers where a file shows
+a tar header stores no type bits. A device node shows its major and minor numbers where a file shows
 its size, as
 .BR ls (1)
 does.

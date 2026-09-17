@@ -35,8 +35,10 @@ TMD_OPT('n', "numeric-owner", no_argument,       NULL,
         "show numeric uid/gid instead of the names stored in the archive")
 TMD_OPT('H', "human",         no_argument,       NULL,
         "print sizes as 1.4K and 23M rather than in bytes")
+TMD_OPT('L', "local",         no_argument,       NULL,
+        "render timestamps in this machine's zone instead of UTC")
 TMD_OPT('u', "utc",           no_argument,       NULL,
-        "render timestamps as UTC rather than in local time")
+        "render timestamps as UTC (the default; accepted for scripts)")
 TMD_OPT('T', "full-time",     no_argument,       NULL,
         "include seconds, nanoseconds and the zone offset in timestamps")
 TMD_OPT('c', "check",         no_argument,       NULL,

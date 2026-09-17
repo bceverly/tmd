@@ -61,12 +61,20 @@ static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
         return;
     }
 
-    tm = opt->utc ? gmtime_r(&seconds, &tmbuf) : localtime_r(&seconds, &tmbuf);
+    tm = opt->local ? localtime_r(&seconds, &tmbuf) : gmtime_r(&seconds, &tmbuf);
     if (!tm) {
         (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
         return;
     }
 
+    /*
+     * The zone marker is part of the timestamp, always.
+     *
+     * "2024-03-15 16:32" tells a reader nothing about which clock it is on, and
+     * the whole reason to read an archive's timestamps is usually to place its
+     * contents in time. A trailing Z says UTC; a numeric offset says the
+     * reader asked for local and here is what that was worth.
+     */
     if (opt->full_time) {
         char stamp[24]; /* "YYYY-MM-DD HH:MM:SS" is 19 */
         char zone[8];   /* "+HHMM" is 5 */
@@ -77,13 +85,22 @@ static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
         unsigned nsec = t->nsec % 1000000000u;
 
         (void)strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm);
-        (void)strftime(zone, sizeof(zone), "%z", tm);
-        if (nsec)
-            (void)snprintf(buf, bufsz, "%s.%09u %s", stamp, nsec, zone);
+        if (opt->local)
+            (void)strftime(zone, sizeof(zone), " %z", tm);
         else
-            (void)snprintf(buf, bufsz, "%s %s", stamp, zone);
+            (void)snprintf(zone, sizeof(zone), "Z");
+
+        if (nsec)
+            (void)snprintf(buf, bufsz, "%s.%09u%s", stamp, nsec, zone);
+        else
+            (void)snprintf(buf, bufsz, "%s%s", stamp, zone);
+    } else if (opt->local) {
+        char stamp[24];
+
+        (void)strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm);
+        (void)snprintf(buf, bufsz, "%s", stamp);
     } else {
-        (void)strftime(buf, bufsz, "%Y-%m-%d %H:%M", tm);
+        (void)strftime(buf, bufsz, "%Y-%m-%d %H:%M:%SZ", tm);
     }
 }
 
@@ -203,7 +220,7 @@ char *tmd_render_listing_line(const struct tmd_entry *e,
     size_string(e, opt, size, sizeof(size));
     format_time(&e->mtime, opt, when, sizeof(when));
 
-    tmd_buf_addf(&line, "%s  %-17s %10s  %-16s  ", mode, owner, size, when);
+    tmd_buf_addf(&line, "%s  %-17s %10s  %-20s  ", mode, owner, size, when);
 
     color = entry_color(e, opt);
     if (color)

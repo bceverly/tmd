@@ -65,6 +65,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "the fuzz target still compiles"
+#
+# tests/fuzz/fuzz_tar.c is source that NOTHING else in the build touches: not
+# `make build`, not the unit tests, not the end-to-end tests, not coverage.
+# Only `make fuzz` and `make security` compile it, so a rename in the headers
+# rots it silently and the next fuzz run reports a build failure instead of a
+# result. That is exactly what happened when struct tmd_options grew a `local`
+# field in place of `utc`.
+#
+# -fsyntax-only, so this costs a fraction of a second and needs no sanitizer
+# runtime installed.
+if "$CC" -std=c11 -O2 "${CPPFLAGS_ALL[@]}" "${WARNINGS[@]}" -Werror \
+     -fsyntax-only tests/fuzz/fuzz_tar.c 2> "$WORK/fuzz-target.log"; then
+  ok "tests/fuzz/fuzz_tar.c compiles against the current headers"
+else
+  bad "the fuzz target no longer compiles"
+  sed 's/^/      /' "$WORK/fuzz-target.log" | head -20
+fi
+
+# ---------------------------------------------------------------------------
 section "gcc -fanalyzer — path-sensitive analysis"
 # Separate from the warning pass because it is slow and because its findings
 # are of a different kind: leaks, double frees and null dereferences along a

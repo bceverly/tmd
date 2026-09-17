@@ -33,9 +33,9 @@ static void make_entry(struct tmd_entry *e)
 static void default_options(struct tmd_options *opt)
 {
     memset(opt, 0, sizeof(*opt));
-    /* UTC, so the expected strings below do not depend on where the tests run.
-     * A test that passes only in one time zone is worse than no test. */
-    opt->utc = true;
+    /* Nothing more to set: a zeroed options struct means UTC, which is what
+     * keeps the expected strings below independent of where the tests run. A
+     * test that passes only in one time zone is worse than no test. */
 }
 
 static void test_listing_line(void)
@@ -52,7 +52,7 @@ static void test_listing_line(void)
     CHECK_CONTAINS(line, "-rw-r--r--");
     CHECK_CONTAINS(line, "bceverly/staff");
     CHECK_CONTAINS(line, "1234");
-    CHECK_CONTAINS(line, "2020-09-13 12:26");
+    CHECK_CONTAINS(line, "2020-09-13 12:26:40Z");
     CHECK_CONTAINS(line, "src/main.c");
     free(line);
 
@@ -136,9 +136,21 @@ static void test_listing_line(void)
     opt.full_time = true;
     e.mtime.nsec = 123456789;
     line = tmd_render_listing_line(&e, &opt);
-    CHECK_CONTAINS(line, "2020-09-13 12:26:40.123456789");
+    CHECK_CONTAINS(line, "2020-09-13 12:26:40.123456789Z");
     free(line);
     opt.full_time = false;
+
+    TEST_CASE("--local renders in the reader's zone, with no Z");
+    make_entry(&e);
+    opt.local = true;
+    line = tmd_render_listing_line(&e, &opt);
+    /* The instant is the same; only the rendering differs. Which wall-clock
+     * numerals appear depends on the machine's zone, so this checks for the
+     * absence of the UTC marker rather than for a particular time. */
+    CHECK(strstr(line, "Z") == NULL);
+    CHECK_CONTAINS(line, "2020-09-13");
+    free(line);
+    opt.local = false;
 
     TEST_CASE("--color wraps the path and nothing else");
     make_entry(&e);

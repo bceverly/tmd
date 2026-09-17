@@ -87,15 +87,17 @@ int tmd_fuzz_one(const uint8_t *data, size_t size)
             return 0;
     }
 
-    for (i = 0; i < 5; i++) {
+    for (i = 0; i < 6; i++) {
+        /* A zeroed options struct renders in UTC, so the run does not depend
+         * on the machine's zone. */
         memset(&opt, 0, sizeof(opt));
-        opt.utc = true; /* so the run does not depend on the machine's zone */
         switch (i) {
         case 0: break;                                  /* the listing      */
         case 1: opt.long_form = true; opt.headers = true; break;
         case 2: opt.output = TMD_OUT_JSON; break;
         case 3: opt.output = TMD_OUT_CSV; break;
         case 4: opt.info = true; opt.human = true; opt.full_time = true; break;
+        case 5: opt.local = true; opt.full_time = true; break;
         default: break;
         }
         run_one_mode(data, size, &opt, sink);

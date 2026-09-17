@@ -15,6 +15,22 @@
 #
 # Archives are built in a temporary directory that is removed on exit, so a
 # failed run leaves nothing behind and no fixture can go stale.
+#
+# SC2002 ("useless cat") is disabled for this whole file, deliberately.
+#
+# Every `cat archive.tar | tmd` here exists to hand tmd a PIPE. The suggested
+# `tmd < archive.tar` would hand it a regular file, which is seekable — so it
+# would exercise the fseeko path that the -f tests already cover, and the
+# read-and-discard fallback in tmd_source_skip would go untested. The cat is
+# the test.
+#
+# Stated once rather than four times because there is no case in this file
+# where a genuinely useless cat would matter, and because the rule keeps being
+# rediscovered: shellcheck 0.11 does not raise it at all, 0.9 on the CI runner
+# does, and a green local run has twice been followed by a red CI one for
+# exactly this.
+# shellcheck disable=SC2002
+
 set -uo pipefail
 
 TMD="${1:?usage: run.sh /path/to/tmd}"
@@ -137,8 +153,21 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ the metadata itself\033[0m\n'
 
-out="$("$TMD" -f gnu.tar -u 2>/dev/null)"
+out="$("$TMD" -f gnu.tar 2>/dev/null)"
 check_contains "the stored mtime is reported, not today's date" "$out" "2021-03-04"
+check_contains "timestamps carry a zone marker by default" "$out" "Z"
+
+# UTC by default, and --local opts out. Checked by comparing the two renderings
+# of the same archive: they must differ unless the machine happens to be on UTC.
+utc_out="$("$TMD" -f gnu.tar 2>/dev/null | head -3)"
+loc_out="$("$TMD" -f gnu.tar --local 2>/dev/null | head -3)"
+check_contains "the default rendering is marked UTC" "$utc_out" "Z"
+if [ "$(date +%z)" = "+0000" ]; then
+  note "this machine is on UTC, so --local cannot be told apart by value"
+else
+  check "--local renders differently from the UTC default" \
+        "$([ "$utc_out" != "$loc_out" ] && echo differs)" "differs"
+fi
 check_contains "a symlink shows its target" "$out" "tree/sub/link -> ../hello.txt"
 check_contains "a hard link is marked as one" "$out" "link to"
 check_contains "setuid shows in the mode string" "$out" "rws"
@@ -345,14 +374,7 @@ check_status "no -f with an empty stdin is an error, not a silent pass" "$?" 1
 
 # Reading a pipe.
 #
-# The cat is deliberate and must not become a `< gnu.tar` redirect, however
-# much the linter would prefer one. A redirect hands tmd a REGULAR FILE on
-# stdin, which is seekable, so it would exercise the same fseeko path the -f
-# case already covers. Piping gives it a pipe, which cannot seek — and the
-# read-and-discard fallback in tmd_source_skip is the whole point of this check.
-# (Any comment line starting with the linter's own name is read as a directive,
-# hence the circumlocution above.)
-# shellcheck disable=SC2002
+# The cat is deliberate: see the SC2002 note at the top of this file.
 check "reading from standard input matches reading the file" \
       "$(cat gnu.tar | "$TMD" -f - 2>/dev/null)" "$("$TMD" -f gnu.tar 2>/dev/null)"
 

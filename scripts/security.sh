@@ -258,6 +258,19 @@ if FUZZ_SECONDS="$FUZZ_SECONDS" scripts/fuzz.sh > "$REPORTS/fuzz.log" 2>&1; then
                   | sed 's/Done //; s/ runs/ cases/')"
   fi
   ok "${FUZZ_COUNT:-the fuzzer ran} in ${FUZZ_SECONDS}s, no crashes"
+elif grep -q 'could not build the fuzz target' "$REPORTS/fuzz.log"; then
+  # A target that does not compile has found nothing. Reporting it as a crash
+  # sends somebody looking for a malformed archive that does not exist.
+  bad "the fuzz target failed to BUILD — nothing was fuzzed"
+  note "tests/fuzz/fuzz_tar.c is compiled by nothing else; 'make lint' now checks it"
+  # Show the compiler error itself. Echoing fuzz.sh's own failure line back
+  # would only repeat that it failed, not say why.
+  if [ -s .fuzz/build-builtin.log ]; then
+    grep -E 'error:|note:' .fuzz/build-builtin.log | head -6 | sed 's/^/      /'
+    note "full output in .fuzz/build-builtin.log"
+  else
+    note "see $REPORTS/fuzz.log"
+  fi
 else
   bad "the fuzzer found a crash"
   note "see $REPORTS/fuzz.log and .fuzz/crash.tar"
