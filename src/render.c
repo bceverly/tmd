@@ -344,6 +344,155 @@ void tmd_json_escape(struct tmd_buf *b, const char *s)
     tmd_buf_addc(b, '"');
 }
 
+/*
+ * The mode, broken into the bits it is made of.
+ *
+ * "mode": "0755" is the archive's answer and "mode_string": "-rwxr-xr-x" is the
+ * one a person reads; neither is a thing a program can test without decoding it
+ * again. setuid in particular is the bit somebody auditing an archive actually
+ * cares about, and it is invisible in the octal unless you already know to look
+ * at the fourth digit.
+ */
+static void json_mode_bits(struct tmd_buf *b, uint32_t mode)
+{
+    static const char *const who[3] = { "owner", "group", "other" };
+    unsigned                 i;
+
+    tmd_buf_addf(b, ", \"mode_bits\": {\"setuid\": %s, \"setgid\": %s, \"sticky\": %s",
+                 (mode & 04000) ? "true" : "false",
+                 (mode & 02000) ? "true" : "false",
+                 (mode & 01000) ? "true" : "false");
+    for (i = 0; i < 3; i++) {
+        unsigned shift = 6 - i * 3;
+
+        tmd_buf_addf(b, ", \"%s\": {\"read\": %s, \"write\": %s, \"execute\": %s}",
+                     who[i],
+                     (mode & (04u << shift)) ? "true" : "false",
+                     (mode & (02u << shift)) ? "true" : "false",
+                     (mode & (01u << shift)) ? "true" : "false");
+    }
+    tmd_buf_addc(b, '}');
+}
+
+/*
+ * Exactly which blocks this member occupies.
+ *
+ * Derived rather than stored: `stored_size` is the header, its extension
+ * blocks and the padded payload together, so subtracting the padded payload
+ * leaves the headers. Reporting it lets someone reconstruct the archive's
+ * layout from the JSON alone -- and makes the padding visible, which is the
+ * only way to answer "why is this archive bigger than its contents".
+ */
+static uint64_t entry_header_bytes(const struct tmd_entry *e)
+{
+    uint64_t data_padded = tmd_round_up_blocks(e->data_size);
+
+    return e->stored_size > data_padded ? e->stored_size - data_padded : 0;
+}
+
+static void json_blocks(struct tmd_buf *b, const struct tmd_entry *e)
+{
+    /* Each value computed at its own width first, then widened once for
+     * printing. Casting the arithmetic instead widens the result of a uint64_t
+     * expression, which says nothing about the operands. */
+    uint64_t data_padded  = tmd_round_up_blocks(e->data_size);
+    uint64_t header_bytes = entry_header_bytes(e);
+    uint64_t header_blocks = header_bytes / TMD_BLOCK_SIZE;
+    uint64_t data_offset  = e->offset + header_bytes;
+    uint64_t data_blocks  = data_padded / TMD_BLOCK_SIZE;
+    uint64_t padding      = data_padded - e->data_size;
+
+    tmd_buf_addf(b, ", \"blocks\": {\"block_size\": %d", TMD_BLOCK_SIZE);
+    tmd_buf_addf(b, ", \"header_offset\": %llu", (unsigned long long)e->offset);
+    tmd_buf_addf(b, ", \"header_blocks\": %llu", (unsigned long long)header_blocks);
+    tmd_buf_addf(b, ", \"data_offset\": %llu", (unsigned long long)data_offset);
+    tmd_buf_addf(b, ", \"data_bytes\": %llu", (unsigned long long)e->data_size);
+    tmd_buf_addf(b, ", \"data_blocks\": %llu", (unsigned long long)data_blocks);
+    tmd_buf_addf(b, ", \"padding\": %llu", (unsigned long long)padding);
+    tmd_buf_addf(b, ", \"total_bytes\": %llu}",
+                 (unsigned long long)e->stored_size);
+}
+
+/*
+ * Whether a string is text, and where it stops being text if it is not.
+ *
+ * A tar path is a string of bytes with no declared encoding. Most are UTF-8;
+ * the ones that are not are usually a filename from a machine with a different
+ * locale, and occasionally a path built to slip past something that only
+ * checks strings it can decode. Either way the reader wants to know, and
+ * wants the offset rather than a yes/no.
+ */
+static void json_encoding(struct tmd_buf *b, const char *key, const char *s)
+{
+    size_t bad = 0;
+
+    if (!s)
+        return;
+    if (tmd_utf8_first_invalid(s, strlen(s), &bad))
+        tmd_buf_addf(b, ", \"%s\": {\"utf8\": false, \"first_invalid_byte\": %zu}",
+                     key, bad);
+    else
+        tmd_buf_addf(b, ", \"%s\": {\"utf8\": true}", key);
+}
+
+/*
+ * The xattrs, decoded.
+ *
+ * libarchive and star both write extended attributes as pax records whose
+ * value is base64 -- SCHILY.xattr.user.tag, LIBARCHIVE.xattr.user.tag. The
+ * pax object above reports them verbatim, because that is what the archive
+ * says; this reports what they mean. Both are kept: the encoded form is the
+ * evidence, and the decoded form is the answer.
+ *
+ * A value that does not decode is reported as not decoding rather than
+ * quietly skipped, because "this xattr is not valid base64" is itself a
+ * finding about the archive.
+ */
+static void json_xattrs(struct tmd_buf *b, const struct tmd_entry *e)
+{
+    static const char *const prefixes[] = { "SCHILY.xattr.", "LIBARCHIVE.xattr." };
+    size_t                   i;
+    bool                     any = false;
+
+    for (i = 0; i < e->npax; i++) {
+        const char *key = e->pax[i].key;
+        const char *name = NULL;
+        size_t      k;
+
+        for (k = 0; k < sizeof(prefixes) / sizeof(*prefixes); k++) {
+            size_t n = strlen(prefixes[k]);
+
+            if (strncmp(key, prefixes[k], n) == 0 && key[n] != '\0')
+                name = key + n;
+        }
+        if (!name)
+            continue;
+
+        tmd_buf_addstr(b, any ? ", " : ", \"xattrs\": {");
+        any = true;
+        tmd_json_escape(b, name);
+        tmd_buf_addstr(b, ": {\"encoded\": ");
+        tmd_json_escape(b, e->pax[i].value);
+
+        {
+            struct tmd_buf decoded;
+
+            tmd_buf_init(&decoded);
+            if (tmd_base64_decode(e->pax[i].value, &decoded)) {
+                tmd_buf_addstr(b, ", \"decoded\": ");
+                tmd_json_escape(b, decoded.data ? decoded.data : "");
+            } else {
+                tmd_buf_addstr(b, ", \"decoded\": null, \"decode_error\": "
+                                  "\"not valid base64\"");
+            }
+            tmd_buf_free(&decoded);
+        }
+        tmd_buf_addc(b, '}');
+    }
+    if (any)
+        tmd_buf_addc(b, '}');
+}
+
 static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
 {
     const struct tmd_options *opt = rd->opt;
@@ -364,6 +513,7 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
     tmd_buf_addf(&b, ", \"format\": \"%s\"", tmd_format_name(e->format));
     tmd_buf_addf(&b, ", \"mode\": \"%04o\"", e->mode);
     tmd_buf_addf(&b, ", \"mode_string\": \"%s\"", mode);
+    json_mode_bits(&b, e->mode);
     tmd_buf_addf(&b, ", \"uid\": %lld", (long long)e->uid);
     tmd_buf_addf(&b, ", \"gid\": %lld", (long long)e->gid);
     tmd_buf_addstr(&b, ", \"uname\": ");
@@ -372,7 +522,9 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
     tmd_json_escape(&b, e->gname ? e->gname : "");
     tmd_buf_addf(&b, ", \"size\": %llu", (unsigned long long)e->size);
     tmd_buf_addf(&b, ", \"stored_size\": %llu", (unsigned long long)e->stored_size);
+    tmd_buf_addf(&b, ", \"data_size\": %llu", (unsigned long long)e->data_size);
     tmd_buf_addf(&b, ", \"offset\": %llu", (unsigned long long)e->offset);
+    json_blocks(&b, e);
 
     format_time_iso(&e->mtime, stamp, sizeof(stamp));
     if (stamp[0]) {
@@ -383,18 +535,32 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         if (e->mtime.present)
             tmd_buf_addf(&b, ", \"mtime_epoch\": %lld", (long long)e->mtime.sec);
     }
+    if (e->mtime.source)
+        tmd_buf_addf(&b, ", \"mtime_source\": \"%s\"", e->mtime.source);
     if (e->atime.present) {
         format_time_iso(&e->atime, stamp, sizeof(stamp));
         tmd_buf_addf(&b, ", \"atime\": \"%s\"", stamp);
+        tmd_buf_addf(&b, ", \"atime_epoch\": %lld", (long long)e->atime.sec);
+        if (e->atime.source)
+            tmd_buf_addf(&b, ", \"atime_source\": \"%s\"", e->atime.source);
     }
     if (e->ctime.present) {
         format_time_iso(&e->ctime, stamp, sizeof(stamp));
         tmd_buf_addf(&b, ", \"ctime\": \"%s\"", stamp);
+        tmd_buf_addf(&b, ", \"ctime_epoch\": %lld", (long long)e->ctime.sec);
+        if (e->ctime.source)
+            tmd_buf_addf(&b, ", \"ctime_source\": \"%s\"", e->ctime.source);
     }
 
+    if (e->path_source)
+        tmd_buf_addf(&b, ", \"path_source\": \"%s\"", e->path_source);
+    json_encoding(&b, "path_encoding", e->path);
     if (e->linkpath && e->linkpath[0]) {
         tmd_buf_addstr(&b, ", \"linkpath\": ");
         tmd_json_escape(&b, e->linkpath);
+        if (e->linkpath_source)
+            tmd_buf_addf(&b, ", \"linkpath_source\": \"%s\"", e->linkpath_source);
+        json_encoding(&b, "linkpath_encoding", e->linkpath);
     }
     if (e->has_dev)
         tmd_buf_addf(&b, ", \"devmajor\": %u, \"devminor\": %u",
@@ -411,9 +577,27 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
                      e->sparse_truncated ? "true" : "false");
     }
 
-    tmd_buf_addf(&b, ", \"checksum\": {\"stored\": %u, \"computed\": %u, \"valid\": %s}",
+    /*
+     * Both conventions, side by side, and which one the archive agreed with.
+     *
+     * Historic tars disagreed about whether a header's bytes were signed, so an
+     * archive written by one and checked by the other reports a false mismatch.
+     * tmd accepts either -- but "valid" alone hides which, and an archive whose
+     * checksums only match the signed reading says something real about the tool
+     * that wrote it.
+     */
+    tmd_buf_addf(&b, ", \"checksum\": {\"stored\": %u, \"computed\": %u"
+                     ", \"computed_unsigned\": %u, \"computed_signed\": %ld"
+                     ", \"valid\": %s, \"matched\": ",
                  e->chksum_stored, e->chksum_unsigned,
+                 e->chksum_unsigned, (long)e->chksum_signed,
                  e->chksum_ok ? "true" : "false");
+    if (e->chksum_ok && e->chksum_stored == e->chksum_unsigned)
+        tmd_buf_addstr(&b, "\"unsigned\"}");
+    else if (e->chksum_ok && (int32_t)e->chksum_stored == e->chksum_signed)
+        tmd_buf_addstr(&b, "\"signed\"}");
+    else
+        tmd_buf_addstr(&b, "null}");
 
     if (e->npax > 0) {
         tmd_buf_addstr(&b, ", \"pax\": {");
@@ -426,6 +610,7 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         }
         tmd_buf_addc(&b, '}');
     }
+    json_xattrs(&b, e);
 
     if (opt->headers) {
         tmd_buf_addstr(&b, ", \"raw\": {");
@@ -449,6 +634,34 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         tmd_json_escape(&b, e->raw.magic);
         tmd_buf_addstr(&b, ", \"version\": ");
         tmd_json_escape(&b, e->raw.version);
+        if (e->raw.block_present) {
+            char    *encoded = tmd_base64_encode(e->raw.block, sizeof(e->raw.block));
+            uint64_t hdr = entry_header_bytes(e);
+
+            /*
+             * Where this block actually is, which is not always the member's
+             * first block.
+             *
+             * A member with a GNU 'L' long name occupies three header blocks --
+             * the 'L' header, the name it carries, then the member's own ustar
+             * header -- and this is the last of them, the one the fields above
+             * were decoded from. Reporting the offset rather than leaving the
+             * reader to derive it is the difference between the JSON describing
+             * the bytes and merely implying them; a check that the block matches
+             * the file at "blocks.header_offset" fails on exactly these members,
+             * which is how this came up.
+             *
+             * The extension blocks are not reproduced. What they carried is
+             * already here, in the path and in "path_source".
+             */
+            uint64_t block_offset = e->offset +
+                (hdr >= TMD_BLOCK_SIZE ? hdr - TMD_BLOCK_SIZE : 0);
+
+            tmd_buf_addf(&b, ", \"block_offset\": %llu",
+                         (unsigned long long)block_offset);
+            tmd_buf_addf(&b, ", \"block_base64\": \"%s\"", encoded);
+            free(encoded);
+        }
         tmd_buf_addc(&b, '}');
     }
 
@@ -457,7 +670,9 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         for (i = 0; i < e->nwarnings; i++) {
             if (i)
                 tmd_buf_addstr(&b, ", ");
-            tmd_json_escape(&b, e->warnings[i]);
+            tmd_buf_addf(&b, "{\"code\": \"%s\", \"text\": ", e->warnings[i].code);
+            tmd_json_escape(&b, e->warnings[i].text);
+            tmd_buf_addc(&b, '}');
         }
         tmd_buf_addc(&b, ']');
     }
@@ -625,7 +840,7 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
     }
 
     for (i = 0; i < e->nwarnings; i++)
-        (void)fprintf(out, "  warning     %s\n", e->warnings[i]);
+        (void)fprintf(out, "  warning     %s\n", e->warnings[i].text);
 
     (void)fputc('\n', out);
 }
@@ -1161,7 +1376,19 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
         if (rd->archive_index > 0)
             (void)fputs(",\n", rd->out);
         tmd_buf_init(&b);
-        tmd_buf_addstr(&b, "{\n  \"archive\": ");
+        /*
+         * The schema number, first, so a consumer can decide whether it
+         * understands this document before reading it.
+         *
+         * 1 was the output up to and including v1.1.0.x. 2 adds the fields
+         * that make the JSON a description of the bytes rather than a tidier
+         * listing, and changes "warnings" from an array of strings to an array
+         * of {code, text} -- the one shape change, and the reason this is a new
+         * number rather than a silent addition. New keys will keep arriving
+         * within a schema; a consumer that selects the keys it wants is
+         * unaffected by those, which is what the number is for.
+         */
+        tmd_buf_addstr(&b, "{\n  \"schema\": 2,\n  \"archive\": ");
         tmd_json_escape(&b, a->name);
         tmd_buf_addstr(&b, ",\n  \"entries\": [\n");
         (void)fputs(b.data, rd->out);

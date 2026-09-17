@@ -391,11 +391,12 @@ static void test_output_formats(void)
     TEST_CASE("pax attributes and warnings reach the long and json forms");
     {
         struct tmd_kv pax[1];
-        char         *warnings[1];
+        struct tmd_warning warnings[1];
 
         pax[0].key = (char *)"SCHILY.xattr.user.tag";
         pax[0].value = (char *)"value";
-        warnings[0] = (char *)"header checksum mismatch";
+        warnings[0].code = "checksum-mismatch";
+        warnings[0].text = (char *)"header checksum mismatch";
 
         default_options(&opt);
         make_entry(&e);
@@ -414,7 +415,9 @@ static void test_output_formats(void)
         opt.output = TMD_OUT_JSON;
         out = render_to_string(&opt, &a, &e, 1);
         CHECK_CONTAINS(out, "\"pax\": {\"SCHILY.xattr.user.tag\": \"value\"}");
-        CHECK_CONTAINS(out, "\"warnings\": [\"header checksum mismatch\"]");
+        CHECK_CONTAINS(out,
+                       "\"warnings\": [{\"code\": \"checksum-mismatch\", "
+                       "\"text\": \"header checksum mismatch\"}]");
         free(out);
     }
 }
@@ -511,10 +514,134 @@ static void test_extreme_timestamps(void)
     free(line);
 }
 
+/*
+ * The schema 2 JSON: a description of the bytes, not a tidier listing.
+ *
+ * Each of these is a field somebody has to be able to rely on, so each is
+ * checked for its value rather than its presence.
+ */
+static void test_exhaustive_json(void)
+{
+    struct tmd_archive a;
+    struct tmd_entry   e;
+    struct tmd_options opt;
+    char              *out;
+
+    TEST_CASE("the document declares its schema");
+    memset(&a, 0, sizeof(a));
+    a.name = (char *)"t.tar";
+    a.format = TMD_FMT_PAX;
+    default_options(&opt);
+    opt.output = TMD_OUT_JSON;
+    make_entry(&e);
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"schema\": 2");
+    free(out);
+
+    TEST_CASE("the mode is broken into the bits it is made of");
+    make_entry(&e);
+    e.mode = 04755; /* setuid, which is invisible in "rwxr-xr-x" */
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"setuid\": true");
+    CHECK_CONTAINS(out, "\"setgid\": false");
+    CHECK_CONTAINS(out, "\"sticky\": false");
+    CHECK_CONTAINS(out, "\"owner\": {\"read\": true, \"write\": true, \"execute\": true}");
+    CHECK_CONTAINS(out, "\"other\": {\"read\": true, \"write\": false, \"execute\": true}");
+    free(out);
+
+    /*
+     * The block arithmetic is the part somebody would use to reconstruct the
+     * archive's layout, so the padding has to be exactly right: 6 bytes of
+     * payload occupy a whole 512-byte block and waste 506 of it.
+     */
+    TEST_CASE("the block range and its padding are reported exactly");
+    make_entry(&e);
+    e.offset = 1024;
+    e.data_size = 6;
+    e.size = 6;
+    e.stored_size = 1024; /* one header block, one data block */
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"header_offset\": 1024");
+    CHECK_CONTAINS(out, "\"header_blocks\": 1");
+    CHECK_CONTAINS(out, "\"data_offset\": 1536");
+    CHECK_CONTAINS(out, "\"data_blocks\": 1");
+    CHECK_CONTAINS(out, "\"padding\": 506");
+    free(out);
+
+    TEST_CASE("both checksum conventions are reported, and which matched");
+    make_entry(&e);
+    e.chksum_stored = 6208;
+    e.chksum_unsigned = 6208;
+    e.chksum_signed = 6208;
+    e.chksum_ok = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"computed_unsigned\": 6208");
+    CHECK_CONTAINS(out, "\"computed_signed\": 6208");
+    CHECK_CONTAINS(out, "\"matched\": \"unsigned\"");
+    free(out);
+
+    TEST_CASE("a header only the signed reading accepts says so");
+    make_entry(&e);
+    e.chksum_stored = 4294967000u;
+    e.chksum_unsigned = 12;
+    e.chksum_signed = -296;
+    e.chksum_ok = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"matched\": \"signed\"");
+    free(out);
+
+    TEST_CASE("a path that is not UTF-8 is reported with the offending byte");
+    make_entry(&e);
+    e.path = (char *)"bad-\xff-name";
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"path_encoding\": {\"utf8\": false, \"first_invalid_byte\": 4}");
+    free(out);
+
+    TEST_CASE("a path that is UTF-8 says so too");
+    make_entry(&e);
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"path_encoding\": {\"utf8\": true}");
+    free(out);
+
+    TEST_CASE("where each timestamp came from is reported");
+    make_entry(&e);
+    e.mtime.source = "pax mtime";
+    e.ctime.sec = 1600000000;
+    e.ctime.present = true;
+    e.ctime.source = "pax SCHILY.ctime";
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"mtime_source\": \"pax mtime\"");
+    CHECK_CONTAINS(out, "\"ctime_source\": \"pax SCHILY.ctime\"");
+    free(out);
+
+    TEST_CASE("xattrs are reported encoded AND decoded");
+    {
+        struct tmd_kv pax[2];
+
+        make_entry(&e);
+        pax[0].key = (char *)"SCHILY.xattr.user.comment";
+        pax[0].value = (char *)"aGVsbG8geGF0dHI=";        /* "hello xattr" */
+        pax[1].key = (char *)"LIBARCHIVE.xattr.user.broken";
+        pax[1].value = (char *)"!!!not base64!!!";
+        e.pax = pax;
+        e.npax = 2;
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "\"user.comment\": {\"encoded\": \"aGVsbG8geGF0dHI=\", "
+                            "\"decoded\": \"hello xattr\"}");
+        /* A value that is not base64 is called out, not silently dropped: that
+         * it does not decode is itself a fact about the archive. */
+        CHECK_CONTAINS(out, "\"decoded\": null, \"decode_error\": \"not valid base64\"");
+        /* And the verbatim record is still there beside the decoding. */
+        CHECK_CONTAINS(out, "\"SCHILY.xattr.user.comment\": \"aGVsbG8geGF0dHI=\"");
+        free(out);
+    }
+}
+
 void test_render(void)
 {
     test_listing_line();
     test_json_escaping();
     test_output_formats();
     test_extreme_timestamps();
+    test_exhaustive_json();
 }

@@ -41,7 +41,7 @@ static void report_warnings(const struct tmd_archive *a, const struct tmd_entry 
     for (i = 0; i < e->nwarnings; i++)
         (void)fprintf(stderr, "tmd: %s: %s: %s\n", a->name,
                       e->path && e->path[0] ? e->path : "(unnamed member)",
-                      e->warnings[i]);
+                      e->warnings[i].text);
 }
 
 static void report_archive_warnings(const struct tmd_archive *a,
@@ -52,7 +52,7 @@ static void report_archive_warnings(const struct tmd_archive *a,
     if (opt->quiet)
         return;
     for (i = from; i < a->nwarnings; i++)
-        (void)fprintf(stderr, "tmd: %s: %s\n", a->name, a->warnings[i]);
+        (void)fprintf(stderr, "tmd: %s: %s\n", a->name, a->warnings[i].text);
 }
 
 /* Reads one archive into the renderer. Returns the exit status this archive

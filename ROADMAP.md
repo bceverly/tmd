@@ -12,63 +12,6 @@ rather than silently dropping, so it is not proposed again a year later.
 
 ---
 
-## Exhaustive JSON output, and a `-t` spelling for it
-
-**Wanted:** `-t` / `--output-type`, taking `TXT` or `JSON`. In JSON mode, emit
-*everything* that can possibly be determined about each member.
-
-**Where this meets what already exists.** `--format=text|json|csv` already
-selects the output. So this item is really two separable pieces:
-
-1. **The spelling.** A short `-t`, and accepting `TXT`/`JSON` case-insensitively
-   alongside the current lowercase names. Cheap; the option table in
-   `src/options.def` is the only place it has to be added, and the help text and
-   manpage follow from it. Worth deciding whether `-t`/`--output-type` becomes
-   the documented name with `--format` kept as an undocumented alias, or whether
-   both are documented. Breaking `--format` is not on the table — it is in the
-   manpage of a released version.
-
-2. **The exhaustive JSON.** This is the real work, and the more interesting
-   half. Today's JSON reports what the reader already resolves. "Everything it
-   can possibly find out" is a larger set:
-
-   | Already emitted | Not yet |
-   |---|---|
-   | path, kind, typeflag, format | the raw 512-byte header as base64, for byte-exact inspection |
-   | mode, uid/gid, uname/gname | the decoded mode bits broken out (setuid, setgid, sticky, each rwx triple) |
-   | size, stored_size, offset | the exact block range the member occupies, and its padding bytes |
-   | mtime/atime/ctime | which field each timestamp actually came from — header, GNU tail, or a named pax key |
-   | linkpath, devmajor/minor | every pax attribute *including* ones tmd does not act on, with their raw bytes |
-   | sparse map, checksum | both checksum conventions side by side, and which one matched |
-   | pax attributes applied | per-member warnings with a machine-readable code rather than only prose |
-   | | the path's encoding verdict (valid UTF-8, or which byte offsets are not) |
-   | | whether the name arrived via prefix, GNU `L`, or pax, as a field rather than a sentence |
-   | | SCHILY/LIBARCHIVE xattr keys decoded from base64 where they are base64 |
-
-   The guiding rule should be that the JSON is a faithful, lossless
-   *description of the bytes*, not a prettier version of the listing: someone
-   should be able to reconstruct what the header said from the JSON alone, and
-   diff two archives' JSON to see exactly what changed.
-
-**Design notes for whoever picks this up**
-
-- `--long` and `-R` already gather most of these fields for the text renderer.
-  The gap is that some are formatted directly into prose rather than kept as
-  values. Pulling them into `struct tmd_entry` first would let both renderers
-  use them and would shrink `render.c`.
-- The output must stay streaming. A "dump everything" mode is exactly where it
-  is tempting to build the whole document in memory, and a 200,000-member
-  archive is exactly where that stops being acceptable.
-- Raw bytes in JSON need a decided policy. Base64 for the header block is
-  obvious; for *strings* the existing rule (valid UTF-8 passes through, anything
-  else escapes byte-by-byte as `\u00XX`) already round-trips and should not be
-  replaced with base64, which would make every ordinary path unreadable.
-- Adding fields is backwards compatible for consumers that select keys; adding
-  a `"schema": 2` marker at the top of each archive object would let a consumer
-  refuse output it does not understand, and costs nothing now.
-
----
-
 ## Find a member by name: `-m` / `--match PATTERN`
 
 **Wanted:** name a file and have tmd report every member that matches, with its
@@ -177,6 +120,15 @@ Unordered, and none of them thought through as far as the item above.
   line, and emitting as its own JSON field. Cheap: the value is already parsed
   and in the pax list, so this is presentation only.
 
+- **Reproduce the extension blocks, not just the member header.** `-R` now emits
+  `raw.block_base64`, the member's own 512-byte header, byte for byte. A member
+  with a GNU `L` long name or a pax `x` header occupies two or three *more*
+  blocks than that, and those are described by their effects — the path, and
+  `path_source` — rather than reproduced. Emitting them too would make the JSON
+  a complete account of every byte a member occupies, which is what "lossless"
+  ought to mean. It needs somewhere to put a variable number of blocks, and a
+  decision about whether a 200-block pax header is something to emit in full.
+
 - **`--verify` against a manifest.** Read a list of expected paths and sizes and
   report what the archive is missing or has gained. A backup check that does not
   need extraction.
@@ -186,7 +138,9 @@ Unordered, and none of them thought through as far as the item above.
   small — so if it happens it should be `dlopen`-on-demand, or a compile-time
   option that is off by default, and never a hard dependency.
 - **`--diff` between two archives.** Which members were added, removed, changed
-  in size, changed in mode, changed in mtime. The JSON above is the enabler.
+  in size, changed in mode, changed in mtime. The schema 2 JSON is the
+  enabler: it already describes each member field by field, so a diff is a
+  comparison of two documents rather than a second parser.
 - **Report the *order* members appear in.** A tar written by `find | tar -T -`
   has a different ordering fingerprint from one written by `tar -c dir`, which
   is occasionally the only clue about how an archive was made.

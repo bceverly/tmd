@@ -101,6 +101,18 @@ struct tmd_time {
     int64_t  sec;
     uint32_t nsec;
     bool     present;
+    /*
+     * Which field this actually came from: "header", "GNU tail", "pax mtime",
+     * "pax SCHILY.ctime", and so on. NULL while unset.
+     *
+     * It matters more than it looks. The same member can carry a time in the
+     * ustar header and a different one in a pax record that overrides it, and
+     * "the mtime is X" is a much weaker statement than "the mtime is X, and it
+     * came from a pax record rather than the header a v7 reader would see".
+     * Two tars extracting the same archive can legitimately disagree, and this
+     * is the field that explains why.
+     */
+    const char *source;
 };
 
 /* One run of data in a sparse file: `numbytes` of payload at `offset`. */
@@ -141,6 +153,21 @@ struct tmd_raw {
     char devmajor[9];
     char devminor[9];
     char prefix[156];
+
+    /*
+     * The header block exactly as it arrived, all 512 bytes.
+     *
+     * The decoded fields above are this block interpreted; a reader checking
+     * whether tmd interpreted it correctly needs the bytes themselves, and so
+     * does anyone looking at the parts of a header no field above covers --
+     * the padding between fields, which some writers leave uninitialized and
+     * which can carry the fingerprint of the tool that wrote it.
+     *
+     * Rendered only under -R, and as base64: it is 684 characters per member,
+     * which is not something to put in every listing by default.
+     */
+    unsigned char block[TMD_BLOCK_SIZE];
+    bool          block_present;
 };
 
 /*
@@ -150,6 +177,21 @@ struct tmd_raw {
  * as a GNU 'L' block or a pax `path` attribute: by the time an entry is handed
  * out, `path` is the real path and `path_source` records where it came from.
  */
+/*
+ * One complaint about an archive or a member.
+ *
+ * The prose is what a person reads; the code is what a program matches on.
+ * Emitting only prose meant the machine-readable formats could say that
+ * something was wrong but never *what*, so anything consuming the JSON had to
+ * pattern-match English that was free to be reworded. The code is the stable
+ * half: it is part of the output contract and does not change once shipped,
+ * while the text stays free to be made clearer.
+ */
+struct tmd_warning {
+    const char *code;
+    char       *text;
+};
+
 struct tmd_entry {
     char *path;
     char *linkpath;
@@ -212,8 +254,8 @@ struct tmd_entry {
 
     /* Per-entry complaints: a bad checksum, a field that is not octal, a
      * sparse map that does not add up. Never fatal on their own. */
-    char **warnings;
-    size_t nwarnings;
+    struct tmd_warning *warnings;
+    size_t              nwarnings;
 
     struct tmd_raw raw;
 };
@@ -303,8 +345,8 @@ struct tmd_archive {
 
     struct tmd_features features;
 
-    char **warnings;
-    size_t nwarnings;
+    struct tmd_warning *warnings;
+    size_t              nwarnings;
 };
 
 enum tmd_output {

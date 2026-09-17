@@ -210,6 +210,102 @@ static void test_rounding(void)
     CHECK_INT(tmd_round_up_blocks(UINT64_MAX) % 512, 0);
 }
 
+static void test_base64(void)
+{
+    static const struct {
+        const char *plain;
+        const char *encoded;
+    } vectors[] = {
+        /* RFC 4648 section 10, which exists precisely so an implementation can
+         * be checked rather than believed. */
+        { "",       ""         },
+        { "f",      "Zg=="     },
+        { "fo",     "Zm8="     },
+        { "foo",    "Zm9v"     },
+        { "foob",   "Zm9vYg==" },
+        { "fooba",  "Zm9vYmE=" },
+        { "foobar", "Zm9vYmFy" },
+    };
+    size_t i;
+
+    TEST_CASE("base64 encodes the RFC 4648 test vectors");
+    for (i = 0; i < sizeof(vectors) / sizeof(*vectors); i++) {
+        char *got = tmd_base64_encode(vectors[i].plain, strlen(vectors[i].plain));
+
+        CHECK_STR(got, vectors[i].encoded);
+        free(got);
+    }
+
+    TEST_CASE("base64 decodes them back");
+    for (i = 1; i < sizeof(vectors) / sizeof(*vectors); i++) {
+        struct tmd_buf out;
+
+        tmd_buf_init(&out);
+        CHECK(tmd_base64_decode(vectors[i].encoded, &out));
+        CHECK_STR(out.data ? out.data : "", vectors[i].plain);
+        tmd_buf_free(&out);
+    }
+
+    TEST_CASE("every byte value survives the round trip");
+    {
+        unsigned char all[256];
+        struct tmd_buf out;
+        char *enc;
+        size_t k;
+
+        for (k = 0; k < sizeof(all); k++)
+            all[k] = (unsigned char)k;
+        enc = tmd_base64_encode(all, sizeof(all));
+        tmd_buf_init(&out);
+        CHECK(tmd_base64_decode(enc, &out));
+        CHECK(out.len == sizeof(all));
+        CHECK(out.data != NULL && memcmp(out.data, all, sizeof(all)) == 0);
+        tmd_buf_free(&out);
+        free(enc);
+    }
+
+    /* Strict on the way in: a value that is not base64 has to be reported as
+     * such, so the caller can show the raw text instead of a plausible-looking
+     * decode of something that was never encoded. */
+    TEST_CASE("malformed base64 is rejected rather than half-decoded");
+    {
+        static const char *bad[] = {
+            "Zm9vYmFy=",   /* padding where none belongs           */
+            "Zg=",         /* length not a multiple of four        */
+            "Zm9!",        /* a character outside the alphabet     */
+            "=m9v",        /* padding at the front                 */
+            "Z=9v",        /* padding in the middle                */
+        };
+        size_t k;
+
+        for (k = 0; k < sizeof(bad) / sizeof(*bad); k++) {
+            struct tmd_buf out;
+
+            tmd_buf_init(&out);
+            CHECK(!tmd_base64_decode(bad[k], &out));
+            tmd_buf_free(&out);
+        }
+    }
+}
+
+static void test_utf8_offset(void)
+{
+    size_t at;
+
+    TEST_CASE("a valid string reports no invalid byte");
+    CHECK(!tmd_utf8_first_invalid("h\xc3\xa9llo", 6, &at));
+
+    TEST_CASE("the reported offset points at the byte that breaks it");
+    at = 999;
+    CHECK(tmd_utf8_first_invalid("abc\xff", 4, &at));
+    CHECK(at == 3);
+
+    TEST_CASE("a truncated sequence is reported where it starts");
+    at = 999;
+    CHECK(tmd_utf8_first_invalid("ab\xc3", 3, &at));
+    CHECK(at == 2);
+}
+
 void test_util(void)
 {
     test_numeric_fields();
@@ -217,6 +313,8 @@ void test_util(void)
     test_buffer();
     test_strings();
     test_utf8();
+    test_utf8_offset();
+    test_base64();
     test_mode_string();
     test_human_size();
     test_rounding();

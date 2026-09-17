@@ -402,7 +402,7 @@ static void test_damage(void)
     CHECK(!e->chksum_ok);
     CHECK_INT(e->nwarnings, 1);
     if (e->nwarnings)
-        CHECK_CONTAINS(e->warnings[0], "checksum mismatch");
+        CHECK_CONTAINS(e->warnings[0].text, "checksum mismatch");
     tmd_reader_free(reader);
     tmd_source_close(src);
     tb_free(&tb);
@@ -423,7 +423,7 @@ static void test_damage(void)
     (void)tmd_reader_next(reader, &e);
     CHECK(!e->chksum_ok);
     if (e->nwarnings)
-        CHECK_CONTAINS(e->warnings[0], "not octal");
+        CHECK_CONTAINS(e->warnings[0].text, "not octal");
     tmd_reader_free(reader);
     tmd_source_close(src);
     tb_free(&tb);
@@ -478,7 +478,7 @@ static void test_damage(void)
     CHECK(!tmd_reader_archive(rb.reader)->eof_marker);
     CHECK_INT(tmd_reader_archive(rb.reader)->nwarnings, 1);
     if (tmd_reader_archive(rb.reader)->nwarnings)
-        CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0], "end-of-archive");
+        CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0].text, "end-of-archive");
     read_free(&rb);
     tb_free(&tb);
 
@@ -504,7 +504,7 @@ static void test_damage(void)
     tb_raw(&tb, "half a header", 13);
     read_all(&rb, &tb);
     CHECK_INT(rb.count, 1);
-    CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0], "mid-header");
+    CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0].text, "mid-header");
     read_free(&rb);
     tb_free(&tb);
 
@@ -520,7 +520,7 @@ static void test_damage(void)
     CHECK_INT(rb.count, 2);
     if (rb.count == 2)
         CHECK_STR(rb.entries[1].path, "second.txt");
-    CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0], "not an end marker");
+    CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0].text, "not an end marker");
     read_free(&rb);
     tb_free(&tb);
 

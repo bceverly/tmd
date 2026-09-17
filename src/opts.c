@@ -4,6 +4,7 @@
  */
 #include "opts.h"
 
+#include <ctype.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <string.h>
@@ -176,7 +177,7 @@ void tmd_print_usage(FILE *out)
                   "just the summary: format, counts, sizes");
     (void)fprintf(out, "  %-38s %s\n", "tmd -f archive.tar -o report.txt",
                   "write the report to a file");
-    (void)fprintf(out, "  %-38s %s\n", "tmd -f archive.tar --format=json",
+    (void)fprintf(out, "  %-38s %s\n", "tmd -f archive.tar -t JSON",
                   "machine-readable output for a script");
     (void)fprintf(out, "  %-38s %s\n", "gzip -dc a.tar.gz | tmd",
                   "read a compressed archive through a pipe");
@@ -202,6 +203,38 @@ static int bad_usage(const char *fmt, ...)
     va_end(ap);
     (void)fprintf(stderr, "\nTry 'tmd --help' for the full list of options.\n");
     return TMD_EXIT_USAGE;
+}
+
+/*
+ * TXT/JSON/CSV in any case, plus "text" for the name --format has always used.
+ */
+static bool parse_output_type(const char *s, enum tmd_output *out)
+{
+    static const struct {
+        const char      *name;
+        enum tmd_output  value;
+    } types[] = {
+        { "txt",  TMD_OUT_TEXT },
+        { "text", TMD_OUT_TEXT },
+        { "json", TMD_OUT_JSON },
+        { "csv",  TMD_OUT_CSV  },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(types) / sizeof(*types); i++) {
+        const char *a = s;
+        const char *b = types[i].name;
+
+        while (*a && *b && tolower((unsigned char)*a) == *b) {
+            a++;
+            b++;
+        }
+        if (*a == '\0' && *b == '\0') {
+            *out = types[i].value;
+            return true;
+        }
+    }
+    return false;
 }
 
 int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
@@ -286,16 +319,19 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         case 'q':
             cli->options.quiet = true;
             break;
+        case 't':
         case OPT_FORMAT:
-            if (strcmp(optarg, "text") == 0)
-                cli->options.output = TMD_OUT_TEXT;
-            else if (strcmp(optarg, "json") == 0)
-                cli->options.output = TMD_OUT_JSON;
-            else if (strcmp(optarg, "csv") == 0)
-                cli->options.output = TMD_OUT_CSV;
-            else
-                return bad_usage("unknown output format \"%s\" — expected text, json or csv",
-                                 optarg);
+            /*
+             * -t and --format are the same switch under two names. --format is
+             * in the manpage of a released version, so it keeps working; -t is
+             * the shorter spelling, and takes the names in upper case because
+             * that is how somebody writing TXT or JSON on a command line
+             * actually writes them. Both accept either case, because insisting
+             * on one would be a rule with nothing behind it.
+             */
+            if (!parse_output_type(optarg, &cli->options.output))
+                return bad_usage("unknown output type \"%s\" — expected "
+                                 "TXT, JSON or CSV", optarg);
             break;
         case OPT_COLOR:
             color_when = optarg ? optarg : "always";

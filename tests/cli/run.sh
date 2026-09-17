@@ -235,6 +235,31 @@ fi
 # ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ output formats\033[0m\n'
 
+# -t and --format are the same switch. --format is in a released manpage and
+# keeps working; -t is the documented spelling from 1.2 on. Both cases of the
+# type name are accepted, so all four spellings below must agree exactly.
+for spelling in "-t JSON" "-t json" "--format=json"; do
+  # shellcheck disable=SC2086
+  if [ "$("$TMD" -f gnu.tar $spelling 2>/dev/null | head -c 200)" \
+     = "$("$TMD" -f gnu.tar --format=json 2>/dev/null | head -c 200)" ]; then
+    ok "\"$spelling\" selects JSON"
+  else
+    bad "\"$spelling\" does not match --format=json"
+  fi
+done
+for spelling in "-t TXT" "-t txt" "--format=text"; do
+  # shellcheck disable=SC2086
+  if [ "$("$TMD" -f gnu.tar $spelling 2>/dev/null | head -1)" \
+     = "$("$TMD" -f gnu.tar 2>/dev/null | head -1)" ]; then
+    ok "\"$spelling\" selects the text listing"
+  else
+    bad "\"$spelling\" does not match the default listing"
+  fi
+done
+
+"$TMD" -f gnu.tar -t XML > /dev/null 2>&1
+check_status "an unknown output type is a usage error" "$?" 2
+
 json="$("$TMD" -f gnu.tar --format=json 2>/dev/null)"
 if command -v python3 > /dev/null 2>&1; then
   if printf '%s' "$json" | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null; then
@@ -242,6 +267,23 @@ if command -v python3 > /dev/null 2>&1; then
   else
     bad "json output does not parse"
   fi
+  schema="$(printf '%s' "$json" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["schema"])' 2>/dev/null)"
+  check "the document declares schema 2" "$schema" "2"
+
+  # The point of the exhaustive output: the base64 header has to be the header,
+  # byte for byte, or "a faithful description of the bytes" is just a slogan.
+  exact="$("$TMD" -f gnu.tar -R --format=json 2>/dev/null | python3 -c '
+import json, sys, base64, pathlib
+d = json.load(sys.stdin)
+blob = pathlib.Path("gnu.tar").read_bytes()
+for e in d["entries"]:
+    off = e["raw"]["block_offset"]
+    if base64.b64decode(e["raw"]["block_base64"]) != blob[off:off + 512]:
+        print("no"); sys.exit()
+print("yes")' 2>/dev/null)"
+  check "every raw header block round-trips byte for byte" "$exact" "yes"
+
   members="$(printf '%s' "$json" \
              | python3 -c 'import json,sys; print(json.load(sys.stdin)["summary"]["members"])' 2>/dev/null)"
   entries="$(printf '%s' "$json" \

@@ -85,6 +85,16 @@ void tmd_field_str(const char *field, size_t len, char *out);
 /* True when the bytes are well-formed UTF-8 (used to decide how to render a
  * path in JSON, where an invalid byte would produce invalid output). */
 bool tmd_utf8_valid(const char *s, size_t len);
+/* True when the string is NOT valid UTF-8, with *offset set to the byte that
+ * ends the valid prefix. "byte 14 is not UTF-8" is actionable where a bare
+ * "not UTF-8" is not. */
+bool tmd_utf8_first_invalid(const char *s, size_t len, size_t *offset);
+
+/* Caller frees. */
+char *tmd_base64_encode(const void *data, size_t n);
+/* Appends the decoded bytes to `out`. False (with `out` possibly appended to)
+ * when the input is not well-formed base64. */
+bool  tmd_base64_decode(const char *s, struct tmd_buf *out);
 
 /*
  * Render `mode` as the ten-character listing form, e.g. "-rw-r--r--".

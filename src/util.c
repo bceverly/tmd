@@ -299,10 +299,19 @@ void tmd_field_str(const char *field, size_t len, char *out)
 /* Presentation helpers                                                      */
 /* ------------------------------------------------------------------------- */
 
-bool tmd_utf8_valid(const char *s, size_t len)
+/*
+ * Walk a string as UTF-8, reporting where it stops being valid.
+ *
+ * The offset matters. "this path is not UTF-8" tells a reader nothing they can
+ * act on; "byte 14 is not UTF-8" points at the character, which is the
+ * difference between a mojibake filename somebody can fix and a mystery.
+ *
+ * `bad` may be NULL when only the verdict is wanted.
+ */
+static bool utf8_scan(const char *s, size_t len, size_t *bad)
 {
     const unsigned char *p = (const unsigned char *)s;
-    size_t i = 0;
+    size_t               i = 0;
 
     while (i < len) {
         unsigned char c = p[i];
@@ -323,13 +332,13 @@ bool tmd_utf8_valid(const char *s, size_t len)
             extra = 3;
             cp = c & 0x07u;
         } else {
-            return false; /* a continuation byte or an over-long lead */
+            goto bad_at; /* a continuation byte or an over-long lead */
         }
         if (i + extra >= len)
-            return false; /* the continuation bytes run past the end */
+            goto bad_at; /* the continuation bytes run past the end */
         for (size_t k = 1; k <= extra; k++) {
             if ((p[i + k] & 0xc0) != 0x80)
-                return false;
+                goto bad_at;
             cp = (cp << 6) | (uint32_t)(p[i + k] & 0x3f);
         }
         /* Reject the encodings that are valid bytes but not valid text:
@@ -337,10 +346,127 @@ bool tmd_utf8_valid(const char *s, size_t len)
          * exactly what a path crafted to slip past a filter looks like. */
         if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) ||
             (extra == 3 && cp < 0x10000))
-            return false;
+            goto bad_at;
         if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
-            return false;
+            goto bad_at;
         i += extra + 1;
+    }
+    return true;
+
+bad_at:
+    if (bad)
+        *bad = i;
+    return false;
+}
+
+bool tmd_utf8_valid(const char *s, size_t len)
+{
+    return utf8_scan(s, len, NULL);
+}
+
+bool tmd_utf8_first_invalid(const char *s, size_t len, size_t *offset)
+{
+    return !utf8_scan(s, len, offset);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Base64                                                                     */
+/*                                                                            */
+/* Two directions, for two different jobs. Encoding puts a header's 512 raw    */
+/* bytes into JSON, where they have to survive being read back byte for byte.  */
+/* Decoding turns the xattr values libarchive and star write as base64 back    */
+/* into the bytes they stand for, so that `SCHILY.xattr.user.tag` reads as its */
+/* value rather than as the encoding of one.                                  */
+/* ------------------------------------------------------------------------- */
+
+static const char B64[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+char *tmd_base64_encode(const void *data, size_t n)
+{
+    const unsigned char *p = data;
+    struct tmd_buf       b;
+    size_t               i;
+
+    /*
+     * Built into the growable buffer the rest of this program uses, rather
+     * than into a hand-sized allocation.
+     *
+     * The arithmetic for "how big is the encoding of n bytes" is easy to get
+     * right and hard to *show* is right: it has an integer division, a
+     * multiplication that can overflow for a large n, and a degenerate empty
+     * case. Written that way it was correct and the clang analyzer still could
+     * not confirm it -- and an analyzer that cannot follow the bound is a fair
+     * proxy for a reader who cannot either. tmd_buf grows itself, so there is
+     * no bound left to argue about, and 512 bytes of header is not a size
+     * where the difference costs anything.
+     */
+    tmd_buf_init(&b);
+    for (i = 0; i < n; i += 3) {
+        size_t   have = n - i; /* 3, or 1 or 2 in the final group */
+        uint32_t v = (uint32_t)p[i] << 16;
+
+        if (have > 1)
+            v |= (uint32_t)p[i + 1] << 8;
+        if (have > 2)
+            v |= p[i + 2];
+
+        tmd_buf_addc(&b, B64[(v >> 18) & 0x3f]);
+        tmd_buf_addc(&b, B64[(v >> 12) & 0x3f]);
+        /* The ternary's type is int, so the narrowing is named rather than
+         * left to happen quietly. */
+        tmd_buf_addc(&b, (char)(have > 1 ? B64[(v >> 6) & 0x3f] : '='));
+        tmd_buf_addc(&b, (char)(have > 2 ? B64[v & 0x3f] : '='));
+    }
+    return tmd_buf_detach(&b);
+}
+
+/*
+ * Decode, strictly.
+ *
+ * Strict because the result is shown to a reader as "this is what the
+ * attribute says", and a decoder that quietly skips what it does not
+ * understand would turn a malformed value into a plausible-looking one. A
+ * value that is not base64 is reported as not base64, and the raw text is
+ * shown instead.
+ */
+static int b64_value(unsigned char c)
+{
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+bool tmd_base64_decode(const char *s, struct tmd_buf *out)
+{
+    size_t   len = strlen(s);
+    size_t   i;
+    uint32_t acc = 0;
+    unsigned bits = 0;
+
+    if (len == 0 || (len % 4) != 0)
+        return false;
+    for (i = 0; i < len; i++) {
+        int v;
+
+        if (s[i] == '=') {
+            /* Padding is only ever the last one or two characters. */
+            if (i + 2 < len || (i + 2 == len && s[i + 1] != '='))
+                return false;
+            break;
+        }
+        v = b64_value((unsigned char)s[i]);
+        if (v < 0)
+            return false;
+        acc = (acc << 6) | (uint32_t)v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            tmd_buf_addc(out, (char)(unsigned char)((acc >> bits) & 0xff));
+        }
     }
     return true;
 }

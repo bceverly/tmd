@@ -45,8 +45,10 @@ TMD_OPT('c', "check",         no_argument,       NULL,
         "check the archive for damage (checksums, truncation); exit 3 on any")
 TMD_OPT('q', "quiet",         no_argument,       NULL,
         "do not write warnings about damaged headers to standard error")
+TMD_OPT('t', "output-type",   required_argument, "TYPE",
+        "output type: TXT (the default), JSON or CSV; case does not matter")
 TMD_OPT(OPT_FORMAT, "format", required_argument, "FMT",
-        "output format: text (the default), json or csv")
+        "the same thing, spelled the way releases before 1.2 spelled it")
 TMD_OPT(OPT_COLOR,  "color",  optional_argument, "WHEN",
         "colorize the listing: auto (the default), always or never")
 TMD_OPT('h', "help",          no_argument,       NULL,

@@ -100,8 +100,11 @@ check the archive for damage (checksums, truncation); exit 3 on any
 .B \-q, \-\-quiet
 do not write warnings about damaged headers to standard error
 .TP
+.B \-t, \-\-output\-type=TYPE
+output type: TXT (the default), JSON or CSV; case does not matter
+.TP
 .B     \-\-format=FMT
-output format: text (the default), json or csv
+the same thing, spelled the way releases before 1.2 spelled it
 .TP
 .B     \-\-color[=WHEN]
 colorize the listing: auto (the default), always or never
@@ -141,7 +144,7 @@ just the summary: format, counts, sizes
 .B tmd \-f archive.tar \-o report.txt
 write the report to a file
 .TP
-.B tmd \-f archive.tar \-\-format=json
+.B tmd \-f archive.tar \-t JSON
 machine\-readable output for a script
 .TP
 .B gzip \-dc a.tar.gz | tmd

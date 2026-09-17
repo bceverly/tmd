@@ -114,6 +114,14 @@ make test           # unit + end-to-end tests, sanitizers, 80% coverage gate
 Usage: tmd -f FILE [OPTION]...
        tmd [OPTION]... < FILE      (or: ... | tmd)
 
+Reads a tar archive and reports what is inside it without extracting
+anything: one ls -l style line per member by default, or every header
+field in long, JSON or CSV form. BSD archives (ustar and pax, as bsdtar
+and libarchive write them), GNU tar archives including long names and
+sparse files, and pre-POSIX v7 archives are all understood. The archive
+is only ever opened for reading.
+
+Options:
   -f, --file=FILE          archive to read; repeatable. Without it, standard input is read
   -o, --output=FILE        write the report to FILE instead of standard output
   -l, --long               one block per member with every field, rather than one line
@@ -128,7 +136,8 @@ Usage: tmd -f FILE [OPTION]...
   -T, --full-time          include seconds, nanoseconds and the zone offset in timestamps
   -c, --check              check the archive for damage (checksums, truncation); exit 3 on any
   -q, --quiet              do not write warnings about damaged headers to standard error
-      --format=FMT         output format: text (the default), json or csv
+  -t, --output-type=TYPE   output type: TXT (the default), JSON or CSV; case does not matter
+      --format=FMT         the same thing, spelled the way releases before 1.2 spelled it
       --color[=WHEN]       colorize the listing: auto (the default), always or never
   -h, --help               show this help and exit
   -V, --version            show the version and exit
@@ -274,21 +283,83 @@ facts the archive states, and both are labeled as such:
 ### JSON and CSV
 
 ```console
-$ tmd -f backup.tar --format=json | jq '.summary.members'
+$ tmd -f backup.tar -t JSON | jq '.summary.members'
 8
-$ tmd -f backup.tar --format=csv | head -2
+$ tmd -f backup.tar -t CSV | head -2
 path,kind,mode_string,mode,format,uid,gid,uname,gname,size,stored_size,offset,mtime,mtime_epoch,linkpath,checksum
 src/main.c,file,-rw-r--r--,0644,pax,1000,50,bceverly,staff,1234,1536,0,2026-09-16T18:11:33Z,1789668693,,ok
 ```
 
+`-t` / `--output-type` takes `TXT`, `JSON` or `CSV` in either case. `--format`
+is the same switch under the name releases before 1.2 used, and keeps working.
+
 One `-f` produces a bare JSON object; several produce an array of them, so
-`tmd -f x.tar --format=json | jq .summary` works without indexing into a
+`tmd -f x.tar -t JSON | jq .summary` works without indexing into a
 single-element list.
+
+#### The JSON describes the bytes
+
+The JSON is not a tidier listing. It aims to be a faithful description of what
+is actually in the header, so that two archives can be diffed field by field and
+a reader can check tmd's interpretation against the bytes it interpreted:
+
+```console
+$ tmd -f backup.tar -t JSON | jq '.entries[0] | {path, mode_bits, blocks, checksum}'
+{
+  "path": "src/main.c",
+  "mode_bits": {
+    "setuid": false, "setgid": false, "sticky": false,
+    "owner": {"read": true, "write": true, "execute": false},
+    "group": {"read": true, "write": false, "execute": false},
+    "other": {"read": true, "write": false, "execute": false}
+  },
+  "blocks": {
+    "block_size": 512, "header_offset": 0, "header_blocks": 1,
+    "data_offset": 512, "data_bytes": 1234, "data_blocks": 3,
+    "padding": 302, "total_bytes": 2048
+  },
+  "checksum": {
+    "stored": 6208, "computed": 6208,
+    "computed_unsigned": 6208, "computed_signed": 6208,
+    "valid": true, "matched": "unsigned"
+  }
+}
+```
+
+What that buys, field by field:
+
+| Field | Answers |
+|---|---|
+| `schema` | which version of this document you are reading (currently `2`) |
+| `mode_bits` | is anything setuid — a question `"0755"` hides in a digit |
+| `blocks` | exactly which bytes the member occupies, and how much is padding |
+| `checksum.matched` | `unsigned`, `signed`, or `null` — historic tars disagreed, and which one an archive agrees with says something about the tool that wrote it |
+| `mtime_source` | `header`, `GNU tail`, `pax mtime` … — a pax record can override the header, and two tars can legitimately disagree about the same member |
+| `path_source` | whether the name came from the header, a `prefix`, a GNU `L` block or a pax record |
+| `path_encoding` | whether the path is valid UTF-8, and the offset of the first byte that is not |
+| `xattrs` | `SCHILY.xattr.*` / `LIBARCHIVE.xattr.*` values decoded from base64, kept **beside** the verbatim record rather than replacing it |
+| `warnings[].code` | a stable name like `checksum-mismatch`, so a consumer matches on that instead of on English |
+| `raw.block_base64` | under `-R`, the member's own 512-byte header, byte for byte, with `raw.block_offset` saying where it is |
+
+`raw.block_offset` is not always `blocks.header_offset`: a member with a GNU `L`
+long name occupies three header blocks, and `raw` describes the last of them.
+
+The base64 block is only emitted under `-R`, because it is 684 characters per
+member and a 200,000-member archive is a normal thing to point this at.
 
 A path in a tar archive is a string of bytes with no declared encoding. In JSON,
 paths that are valid UTF-8 are emitted as themselves; anything else is escaped
 byte by byte as `\u00XX`, which round-trips through any parser and does not
-destroy the value the way replacing it with U+FFFD would.
+destroy the value the way replacing it with U+FFFD would. `path_encoding` says
+which of the two happened, so a consumer never has to guess.
+
+#### Schema versions
+
+`"schema": 2` is the first field of every archive object. New keys keep arriving
+within a schema — a consumer that selects the keys it wants is unaffected — and
+the number changes only when an existing shape does. Schema 1 was the output up
+to v1.1.0.x; schema 2 adds the fields above and changes `warnings` from an array
+of strings to an array of `{code, text}`.
 
 ## What it understands
 
@@ -861,9 +932,8 @@ allocates a *caller-controlled* amount is bounded before it gets there.
 
 ## Roadmap
 
-Ideas for future versions live in [ROADMAP.md](ROADMAP.md) — including an
-exhaustive JSON mode that describes the bytes of a header rather than
-summarizing them, archive diffing, and tar-bomb detection.
+Ideas for future versions live in [ROADMAP.md](ROADMAP.md) — including finding
+a member by name, archive diffing, and tar-bomb detection.
 
 ---
 

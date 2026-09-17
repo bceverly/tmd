@@ -224,7 +224,7 @@ static void test_pax_malformed(void)
     /* The header's own name stands, because nothing valid overrode it. */
     CHECK_STR(e->path, "real.txt");
     CHECK(tmd_reader_archive(reader)->nwarnings > 0);
-    CHECK_CONTAINS(tmd_reader_archive(reader)->warnings[0], "pax record");
+    CHECK_CONTAINS(tmd_reader_archive(reader)->warnings[0].text, "pax record");
     done(src, reader);
     tb_free(&tb);
 
