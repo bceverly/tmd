@@ -211,6 +211,10 @@ jobs:
         run: |
           set -eux
           sudo dpkg -i ../tmd_*_amd64.deb
+          # Everything the package installed. Printed on every run: it is two
+          # lines of log and it is the answer to "where did the manpage
+          # actually go", which a release job once failed for want of.
+          dpkg -L tmd
           # The installed binary, not the one in ./bin.
           which tmd
           tmd --version

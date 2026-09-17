@@ -307,13 +307,29 @@ jobs:
           apt-get install -y -qq --no-install-recommends tar man-db
           dpkg -i /packages/tmd_*_amd64.deb
 
+          # Everything the package put on disk, printed unconditionally so that
+          # a failure below can be diagnosed from this log alone instead of
+          # needing another run to find out what was actually installed.
+          dpkg -L tmd
+
           # It is installed where the package says it is.
           test -x /usr/bin/tmd
-          test -f /usr/share/man/man1/tmd.1.gz
+
+          # A manpage exists and man(1) can resolve it.
+          #
+          # Deliberately NOT `test -f .../tmd.1.gz`. Whether debhelper
+          # compresses a manpage, and with what, is its own business and has
+          # differed between releases -- asserting on the extension made this
+          # job fail on a package that was completely correct. What the package
+          # actually promises is that `man tmd` works, which is what the two
+          # lines below check.
+          test -n "$(find /usr/share/man/man1 -name 'tmd.1*' -print -quit)"
 
           # It runs, and says what it is.
           tmd --version
           tmd --help > /dev/null
+          # Resolves the page through man's own search path, which is the check
+          # a user's `man tmd` actually performs.
           man -w tmd
 
           # It reads a real archive, in every mode, with the documented exit

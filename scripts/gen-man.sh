@@ -182,7 +182,9 @@ is asked for, so the listing can be piped into
 without anything to strip. Warnings about damaged headers go to standard error,
 which is also why
 .B \-o
-redirects only the report.
+redirects only the report. The file it creates is mode 0644, further masked by
+the umask \- so a stricter umask is honored, and a permissive one cannot leave
+an integrity report that anybody can rewrite.
 .SS Long form
 .B \-l
 prints every field of every member instead \\- format, typeflag, both owner

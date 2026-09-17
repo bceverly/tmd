@@ -10,9 +10,11 @@
  * reader into the renderer, and report what went wrong on the way.
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "opts.h"
 #include "render.h"
@@ -131,9 +133,38 @@ int main(int argc, char **argv)
     }
 
     if (cli.output_path) {
-        out = fopen(cli.output_path, "w");
+        int fd;
+
+        /*
+         * open() with an explicit mode, rather than fopen(path, "w").
+         *
+         * fopen creates with 0666 masked by the process umask. Under the usual
+         * 022 that lands on 0644, which is what anyone would expect — but under
+         * a permissive umask it lands on 0666, and the report is world-WRITABLE.
+         * A file somebody else can rewrite is a file whose contents prove
+         * nothing, which matters here because the thing being written is an
+         * integrity report about an archive.
+         *
+         * 0644 is still masked by the umask, so a stricter one is honored and
+         * the normal case is byte-for-byte what it was; all this does is put a
+         * ceiling on the permissive case.
+         *
+         * Deliberately no O_NOFOLLOW and no O_EXCL: the path came from the user
+         * on the command line, and refusing to write through their symlink — or
+         * to an existing file — would break `tmd -f a.tar -o report.txt` run
+         * twice, which is not a security boundary but a redirection they asked
+         * for. Shell `>` behaves the same way.
+         */
+        fd = open(cli.output_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (fd < 0) {
+            (void)fprintf(stderr, "tmd: %s: %s\n", cli.output_path, strerror(errno));
+            tmd_free_args(&cli);
+            return TMD_EXIT_ERROR;
+        }
+        out = fdopen(fd, "w");
         if (!out) {
             (void)fprintf(stderr, "tmd: %s: %s\n", cli.output_path, strerror(errno));
+            (void)close(fd);
             tmd_free_args(&cli);
             return TMD_EXIT_ERROR;
         }

@@ -272,6 +272,22 @@ check "-o leaves standard error empty for a clean archive" "$(cat stderr.txt)" "
 "$TMD" -f gnu.tar -o /nonexistent/dir/report.txt > /dev/null 2>&1
 check_status "-o to an unwritable path fails" "$?" 1
 
+# The report must not be group- or world-writable, whatever the umask is.
+#
+# Run under umask 000 on purpose: that is the only setting where the bug this
+# guards against is visible. fopen(path, "w") creates with 0666 & ~umask, so
+# with a normal 022 it lands on 0644 and looks correct, and with 000 it lands
+# on 0666 — a world-writable integrity report, which is a report that proves
+# nothing. CodeQL caught it; this keeps it caught.
+( umask 000 && "$TMD" -f gnu.tar -o permissive.txt > /dev/null 2>&1 )
+check "-o creates the report 0644 even under umask 000" \
+      "$(stat -c %a permissive.txt 2>/dev/null)" "644"
+
+# ...and a stricter umask is still honored, rather than forced back up to 644.
+( umask 077 && "$TMD" -f gnu.tar -o strict.txt > /dev/null 2>&1 )
+check "-o honors a stricter umask" \
+      "$(stat -c %a strict.txt 2>/dev/null)" "600"
+
 # Reading a pipe.
 #
 # The cat is deliberate and must not become a `< gnu.tar` redirect, however
