@@ -282,6 +282,20 @@ struct tmd_features {
     uint64_t volume_labels;     /* 'V'                                         */
     uint64_t xattr_members;     /* 'E'/'X': Solaris or star attribute members  */
     uint64_t unknown_typeflags;
+
+    /*
+     * Members that would extract outside the current directory.
+     *
+     * Counted as three separate classes because they are three different
+     * mistakes to make when extracting, and the reader wants to know which:
+     * an absolute path is stripped by default by both GNU tar and bsdtar and
+     * honored under -P, a traversal is refused by modern tar and accepted by
+     * old ones, and a link out of the tree is the one that is dangerous in two
+     * steps -- the link, then a later member written through it.
+     */
+    uint64_t escape_absolute;
+    uint64_t escape_traversal;
+    uint64_t escape_link;
     uint64_t prefix_used;       /* members whose path came from prefix+name    */
     uint64_t base256_fields;    /* numeric fields too large for octal          */
     uint64_t subsecond_times;   /* members with nanosecond precision           */
@@ -407,6 +421,7 @@ struct tmd_options {
     const char **match;
     size_t       nmatch;
 
+    bool          stats;   /* --stat: distributions instead of a listing  */
     enum tmd_sort sort;    /* --sort: order the listing by this          */
     bool          reverse; /* --reverse: and invert it                   */
 };

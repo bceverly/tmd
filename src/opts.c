@@ -17,6 +17,7 @@
 enum {
     OPT_FORMAT = 1000,
     OPT_SORT,
+    OPT_STAT,
     OPT_REVERSE,
     OPT_COLOR
 };
@@ -368,6 +369,9 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
                 return bad_usage("unknown sort key \"%s\" — expected "
                                  "path, size, mtime or offset", optarg);
             }
+            break;
+        case OPT_STAT:
+            cli->options.stats = true;
             break;
         case OPT_REVERSE:
             cli->options.reverse = true;

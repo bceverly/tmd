@@ -11,6 +11,14 @@
 #include "tar.h"
 #include "util.h"
 
+struct stats;
+struct tmd_render;
+
+/* Defined with the rest of --stat, further down; declared here because the
+ * renderer's free and its JSON summary both come earlier in the file. */
+static void stat_free(struct stats *s);
+static void json_stat(const struct tmd_render *rd, struct tmd_buf *b);
+
 struct tmd_render {
     FILE                     *out;
     const struct tmd_options *opt;
@@ -36,6 +44,9 @@ struct tmd_render {
     size_t                    nheld;
     size_t                    held_cap;
     bool                      warned_large;
+
+    /* --stat: allocated only when asked for; it is a few hundred kilobytes. */
+    struct stats             *stat;
 };
 
 /* Past this many held members, say so once. Not a limit -- truncating a
@@ -357,6 +368,192 @@ char *tmd_render_listing_line(const struct tmd_entry *e,
     }
 
     return tmd_buf_detach(&line);
+}
+
+/* ------------------------------------------------------------------------- */
+/* --stat                                                                    */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * How many distinct timestamps to track, and how many slots to track them in.
+ *
+ * Bounded on purpose. A count of distinct values needs somewhere to put them,
+ * and an archive is a thing somebody else wrote: 200,000 members with 200,000
+ * different seconds must not turn a report into an allocation. Past the limit
+ * the answer becomes "more than 4096 distinct", which is honest and is all the
+ * reader needed anyway -- the interesting answers are 1, a handful, and many.
+ *
+ * SLOTS is twice LIMIT and a power of two, so the table never exceeds half
+ * full and linear probing stays short.
+ */
+#define STAT_TIME_LIMIT 4096
+#define STAT_TIME_SLOTS 8192
+#define STAT_TOP        5
+
+/* The first tar shipped with Seventh Edition Unix in 1979. A timestamp older
+ * than that was not written by a clock that was working. */
+#define TAR_EPOCH 283996800L /* 1979-01-01T00:00:00Z */
+
+struct stat_time {
+    int64_t  sec;
+    uint64_t count;
+    bool     used;
+};
+
+struct stats {
+    uint64_t members;
+    uint64_t extracted;
+    uint64_t stored;
+    uint64_t padding;
+
+    struct {
+        uint64_t size;
+        char    *path;
+    } top[STAT_TOP];
+    size_t ntop;
+
+    struct stat_time times[STAT_TIME_SLOTS];
+    size_t           ndistinct;
+    bool             distinct_overflow;
+
+    int64_t  earliest;
+    int64_t  latest;
+    bool     have_time;
+    uint64_t no_time;
+    uint64_t zero_time;
+    uint64_t negative_time;
+    uint64_t future_time;
+    uint64_t pre_tar_time;
+};
+
+/*
+ * A scramble, not a hash function anybody should rely on.
+ *
+ * Timestamps in one archive cluster tightly -- often consecutive seconds, often
+ * one value repeated -- and taking the low bits of a clustered key straight
+ * into a probe sequence is how a hash table turns into a linked list. Mixing
+ * the high bits down first spreads them.
+ */
+static size_t time_slot(int64_t sec)
+{
+    uint64_t x = (uint64_t)sec;
+
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    return (size_t)(x & (STAT_TIME_SLOTS - 1));
+}
+
+static void stat_note_time(struct stats *s, const struct tmd_time *mt)
+{
+    size_t slot;
+    size_t probes;
+
+    if (!mt->present) {
+        s->no_time++;
+        return;
+    }
+
+    if (!s->have_time) {
+        s->earliest = mt->sec;
+        s->latest = mt->sec;
+        s->have_time = true;
+    } else {
+        if (mt->sec < s->earliest) {
+            s->earliest = mt->sec;
+        }
+        if (mt->sec > s->latest) {
+            s->latest = mt->sec;
+        }
+    }
+
+    if (mt->sec == 0) {
+        s->zero_time++;
+    } else if (mt->sec < 0) {
+        s->negative_time++;
+    } else if (mt->sec < TAR_EPOCH) {
+        s->pre_tar_time++;
+    }
+    if (mt->sec > (int64_t)time(NULL)) {
+        s->future_time++;
+    }
+
+    slot = time_slot(mt->sec);
+    for (probes = 0; probes < STAT_TIME_SLOTS; probes++) {
+        struct stat_time *e = &s->times[slot];
+
+        if (e->used && e->sec == mt->sec) {
+            e->count++;
+            return;
+        }
+        if (!e->used) {
+            if (s->ndistinct >= STAT_TIME_LIMIT) {
+                s->distinct_overflow = true;
+                return;
+            }
+            e->used = true;
+            e->sec = mt->sec;
+            e->count = 1;
+            s->ndistinct++;
+            return;
+        }
+        slot = (slot + 1) & (STAT_TIME_SLOTS - 1);
+    }
+    s->distinct_overflow = true;
+}
+
+/* The largest few, kept in order, so the array is never longer than STAT_TOP
+ * whatever the archive contains. */
+static void stat_note_size(struct stats *s, const struct tmd_entry *e)
+{
+    size_t i;
+    size_t at;
+
+    if (s->ntop == STAT_TOP && e->size <= s->top[s->ntop - 1].size) {
+        return;
+    }
+    at = s->ntop;
+    for (i = 0; i < s->ntop; i++) {
+        if (e->size > s->top[i].size) {
+            at = i;
+            break;
+        }
+    }
+    if (s->ntop == STAT_TOP) {
+        free(s->top[STAT_TOP - 1].path);
+        s->ntop--;
+    }
+    for (i = s->ntop; i > at; i--) {
+        s->top[i] = s->top[i - 1];
+    }
+    s->top[at].size = e->size;
+    s->top[at].path = tmd_xstrdup(e->path ? e->path : "");
+    s->ntop++;
+}
+
+static void stat_note(struct stats *s, const struct tmd_entry *e)
+{
+    uint64_t padded = tmd_round_up_blocks(e->data_size);
+
+    s->members++;
+    s->extracted += e->size;
+    s->stored += e->stored_size;
+    s->padding += padded - e->data_size;
+    stat_note_size(s, e);
+    stat_note_time(s, &e->mtime);
+}
+
+static void stat_free(struct stats *s)
+{
+    size_t i;
+
+    if (!s) {
+        return;
+    }
+    for (i = 0; i < s->ntop; i++) {
+        free(s->top[i].path);
+    }
+    free(s);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1075,6 +1272,49 @@ static void print_portability(FILE *out, const struct tmd_archive *a)
  * filtered run gives no way to tell "two members matched" from "the archive has
  * two members".
  */
+/*
+ * The extraction-safety verdict, as a class.
+ *
+ * Stated even when it is clean, which is unusual for this report -- most lines
+ * appear only when there is something to say. This one is different because a
+ * reader pointing tmd at an untrusted archive is asking a yes/no question, and
+ * the absence of a line is not an answer: it reads as "tmd did not look".
+ */
+static void print_extraction(FILE *out, const struct tmd_archive *a, int width)
+{
+    const struct tmd_features *f = &a->features;
+    uint64_t total = f->escape_absolute + f->escape_traversal + f->escape_link;
+    struct tmd_buf parts;
+
+    if (total == 0) {
+        (void)fprintf(out, "  %-*s%s\n", width, "extraction",
+                      "every member stays inside the extraction directory");
+        return;
+    }
+
+    tmd_buf_init(&parts);
+    if (f->escape_absolute) {
+        tmd_buf_addf(&parts, "%llu absolute",
+                     (unsigned long long)f->escape_absolute);
+    }
+    if (f->escape_traversal) {
+        tmd_buf_addf(&parts, "%s%llu climbing out with \"..\"",
+                     parts.len ? ", " : "",
+                     (unsigned long long)f->escape_traversal);
+    }
+    if (f->escape_link) {
+        tmd_buf_addf(&parts, "%s%llu link%s pointing outside",
+                     parts.len ? ", " : "",
+                     (unsigned long long)f->escape_link,
+                     f->escape_link == 1 ? "" : "s");
+    }
+    (void)fprintf(out, "  %-*s%llu member%s would extract OUTSIDE the current "
+                       "directory\n", width, "extraction",
+                  (unsigned long long)total, total == 1 ? "" : "s");
+    (void)fprintf(out, "  %-*s%s\n", width, "", parts.data ? parts.data : "");
+    tmd_buf_free(&parts);
+}
+
 static void text_matched_line(struct tmd_render *rd, int label_width)
 {
     if (rd->opt->nmatch == 0) {
@@ -1313,6 +1553,8 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
                       f->unknown_typeflags == 1 ? "" : "s");
     }
 
+    print_extraction(out, a, 17);
+
     print_portability(out, a);
 
     if (a->npax_global) {
@@ -1413,6 +1655,8 @@ static void text_summary(struct tmd_render *rd, const struct tmd_archive *a)
                       a->trailing_garbage ? " — NOT all zero" : " of padding");
     }
 
+    print_extraction(out, a, 14);
+
     if (a->npax_global) {
         size_t k;
         for (k = 0; k < a->npax_global; k++) {
@@ -1461,6 +1705,29 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
                  (unsigned long long)a->trailing_bytes);
     tmd_buf_addf(&b, ", \"trailing_garbage\": %s",
                  a->trailing_garbage ? "true" : "false");
+    /*
+     * Extraction safety as its own object, present whether or not -i was asked
+     * for.
+     *
+     * A consumer checking whether an archive is safe to unpack should read one
+     * field and get a boolean, not have to pass an extra switch and then infer
+     * the answer from which keys are absent.
+     */
+    {
+        const struct tmd_features *ef = &a->features;
+        uint64_t escapes = ef->escape_absolute + ef->escape_traversal +
+                           ef->escape_link;
+
+        tmd_buf_addf(&b, ", \"extraction\": {\"escapes\": %s",
+                     escapes ? "true" : "false");
+        tmd_buf_addf(&b, ", \"absolute_paths\": %llu",
+                     (unsigned long long)ef->escape_absolute);
+        tmd_buf_addf(&b, ", \"traversals\": %llu",
+                     (unsigned long long)ef->escape_traversal);
+        tmd_buf_addf(&b, ", \"links_outside\": %llu}",
+                     (unsigned long long)ef->escape_link);
+    }
+
     if (rd->opt->info) {
         const struct tmd_features *f = &a->features;
         size_t                     i;
@@ -1500,6 +1767,10 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
         tmd_buf_addstr(&b, "]}");
     }
 
+    if (rd->opt->stats && rd->stat) {
+        json_stat(rd, &b);
+    }
+
     tmd_buf_addc(&b, '}');
     (void)fputs(b.data, rd->out);
     tmd_buf_free(&b);
@@ -1527,7 +1798,260 @@ struct tmd_render *tmd_render_new(FILE *out, const struct tmd_options *opt,
     return rd;
 }
 
-void tmd_render_free(struct tmd_render *rd) { free(rd); }
+void tmd_render_free(struct tmd_render *rd)
+{
+    stat_free(rd->stat);
+    free(rd);
+}
+
+/* "2 minutes", "3 days" — enough to see the shape of a span at a glance. */
+static void span_string(int64_t seconds, char *buf, size_t bufsz)
+{
+    static const struct {
+        int64_t     unit;
+        const char *name;
+    } scale[] = {
+        { INT64_C(86400) * 365, "year" },
+        { INT64_C(86400) * 30,  "month" },
+        { 86400,       "day" },
+        { 3600,        "hour" },
+        { 60,          "minute" },
+        { 1,           "second" },
+    };
+    size_t i;
+
+    if (seconds == 0) {
+        (void)snprintf(buf, bufsz, "none — every member shares one second");
+        return;
+    }
+    for (i = 0; i < sizeof(scale) / sizeof(*scale); i++) {
+        if (seconds >= scale[i].unit) {
+            int64_t n = seconds / scale[i].unit;
+
+            (void)snprintf(buf, bufsz, "%lld %s%s", (long long)n,
+                           scale[i].name, n == 1 ? "" : "s");
+            return;
+        }
+    }
+    (void)snprintf(buf, bufsz, "%lld seconds", (long long)seconds);
+}
+
+/* The timestamp the most members share, and how many. */
+static const struct stat_time *stat_modal(const struct stats *s)
+{
+    const struct stat_time *best = NULL;
+    size_t                  i;
+
+    for (i = 0; i < STAT_TIME_SLOTS; i++) {
+        if (s->times[i].used && (!best || s->times[i].count > best->count)) {
+            best = &s->times[i];
+        }
+    }
+    return best;
+}
+
+/*
+ * What the spread of timestamps says about how the archive was made.
+ *
+ * This is the half of --stat worth having. "562 members, 2 distinct mtimes two
+ * minutes apart" is a fact; "exported from version control and then partly
+ * regenerated" is what the fact means, and it is the thing somebody trying to
+ * date a tarball actually wants. Stated as an inference, not a verdict,
+ * because it is one.
+ */
+static const char *stat_verdict(const struct stats *s)
+{
+    int64_t span;
+
+    if (!s->have_time || s->members == 0) {
+        return NULL;
+    }
+    span = s->latest - s->earliest;
+
+    if (s->ndistinct == 1 && !s->distinct_overflow) {
+        if (s->zero_time) {
+            return "every member is dated at the epoch — timestamps were "
+                   "discarded, not preserved";
+        }
+        return "one timestamp for every member — normalized, as a reproducible "
+               "build does with SOURCE_DATE_EPOCH";
+    }
+    if (!s->distinct_overflow && s->ndistinct <= 8 && span <= 3600) {
+        return "a handful of timestamps within an hour — exported into a fresh "
+               "directory, then a few files regenerated";
+    }
+    if (span >= INT64_C(86400) * 30) {
+        return "timestamps spread over months or more — real per-file times, "
+               "preserved from a working tree";
+    }
+    return NULL;
+}
+
+static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
+{
+    FILE              *out = rd->out;
+    const struct stats *s = rd->stat;
+    char               human[32];
+    char               stamp[64];
+    char               span[64];
+    const char        *verdict;
+    size_t             i;
+
+    (void)fprintf(out, "\n%s\n", a->name);
+    text_matched_line(rd, 14);
+    (void)fprintf(out, "  %-14s%llu\n", "members", (unsigned long long)s->members);
+
+    /* --- sizes ------------------------------------------------------------ */
+    (void)fprintf(out, "  %-14s%llu bytes (%s)\n", "extracted",
+                  (unsigned long long)s->extracted,
+                  tmd_human_size(s->extracted, human, sizeof(human)));
+    (void)fprintf(out, "  %-14s%llu bytes (%s)\n", "stored",
+                  (unsigned long long)s->stored,
+                  tmd_human_size(s->stored, human, sizeof(human)));
+    if (s->stored > 0) {
+        /* Integer arithmetic to a tenth of a percent: this is a report, and
+         * pulling in floating point for one line of it is not worth it. */
+        uint64_t tenths = (s->padding * 1000u) / s->stored;
+
+        (void)fprintf(out, "  %-14s%llu bytes (%llu.%llu%% of the archive)\n",
+                      "padding", (unsigned long long)s->padding,
+                      (unsigned long long)(tenths / 10),
+                      (unsigned long long)(tenths % 10));
+    }
+
+    for (i = 0; i < s->ntop; i++) {
+        (void)fprintf(out, "  %-14s%10llu  %s\n", i == 0 ? "largest" : "",
+                      (unsigned long long)s->top[i].size, s->top[i].path);
+    }
+
+    /* --- timestamps ------------------------------------------------------- */
+    if (!s->have_time) {
+        (void)fprintf(out, "  %-14sno member carries one\n", "timestamps");
+        return;
+    }
+    if (s->distinct_overflow) {
+        (void)fprintf(out, "  %-14smore than %d distinct\n", "timestamps",
+                      STAT_TIME_LIMIT);
+    } else {
+        (void)fprintf(out, "  %-14s%zu distinct\n", "timestamps", s->ndistinct);
+    }
+
+    {
+        struct tmd_time first = { s->earliest, 0, true, NULL };
+        struct tmd_time last = { s->latest, 0, true, NULL };
+
+        format_time(&first, rd->opt, stamp, sizeof(stamp));
+        (void)fprintf(out, "  %-14s%s\n", "earliest", stamp);
+        format_time(&last, rd->opt, stamp, sizeof(stamp));
+        (void)fprintf(out, "  %-14s%s\n", "latest", stamp);
+    }
+    span_string(s->latest - s->earliest, span, sizeof(span));
+    (void)fprintf(out, "  %-14s%s\n", "span", span);
+
+    {
+        const struct stat_time *modal = stat_modal(s);
+
+        if (modal && modal->count > 1) {
+            struct tmd_time mt = { modal->sec, 0, true, NULL };
+
+            format_time(&mt, rd->opt, stamp, sizeof(stamp));
+            (void)fprintf(out, "  %-14s%s (%llu of %llu members)\n",
+                          "most common", stamp,
+                          (unsigned long long)modal->count,
+                          (unsigned long long)s->members);
+        }
+    }
+
+    /* The ones that are invisible one-member-per-line. */
+    if (s->no_time) {
+        (void)fprintf(out, "  %-14s%llu member%s carry no mtime at all\n",
+                      "missing", (unsigned long long)s->no_time,
+                      s->no_time == 1 ? "" : "s");
+    }
+    if (s->future_time) {
+        (void)fprintf(out, "  %-14s%llu member%s dated in the FUTURE\n",
+                      "future", (unsigned long long)s->future_time,
+                      s->future_time == 1 ? "" : "s");
+    }
+    if (s->pre_tar_time) {
+        (void)fprintf(out, "  %-14s%llu member%s dated before tar existed "
+                           "(earlier than 1979)\n", "implausible",
+                      (unsigned long long)s->pre_tar_time,
+                      s->pre_tar_time == 1 ? "" : "s");
+    }
+    if (s->negative_time) {
+        (void)fprintf(out, "  %-14s%llu member%s dated before 1970\n",
+                      "negative", (unsigned long long)s->negative_time,
+                      s->negative_time == 1 ? "" : "s");
+    }
+
+    verdict = stat_verdict(s);
+    if (verdict) {
+        (void)fprintf(out, "  %-14s%s\n", "produced by", verdict);
+    }
+}
+
+static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
+{
+    const struct stats     *s = rd->stat;
+    const struct stat_time *modal = stat_modal(s);
+    size_t                  i;
+
+    tmd_buf_addf(b, ", \"stat\": {\"members\": %llu",
+                 (unsigned long long)s->members);
+    tmd_buf_addf(b, ", \"extracted\": %llu", (unsigned long long)s->extracted);
+    tmd_buf_addf(b, ", \"stored\": %llu", (unsigned long long)s->stored);
+    tmd_buf_addf(b, ", \"padding\": %llu", (unsigned long long)s->padding);
+
+    tmd_buf_addstr(b, ", \"largest\": [");
+    for (i = 0; i < s->ntop; i++) {
+        tmd_buf_addf(b, "%s{\"size\": %llu, \"path\": ", i ? ", " : "",
+                     (unsigned long long)s->top[i].size);
+        tmd_json_escape(b, s->top[i].path);
+        tmd_buf_addc(b, '}');
+    }
+    tmd_buf_addc(b, ']');
+
+    tmd_buf_addstr(b, ", \"timestamps\": {");
+    tmd_buf_addf(b, "\"distinct\": %zu", s->ndistinct);
+    tmd_buf_addf(b, ", \"distinct_capped\": %s",
+                 s->distinct_overflow ? "true" : "false");
+    if (s->have_time) {
+        struct tmd_time first = { s->earliest, 0, true, NULL };
+        struct tmd_time last = { s->latest, 0, true, NULL };
+        char            stamp[64];
+
+        format_time_iso(&first, stamp, sizeof(stamp));
+        tmd_buf_addf(b, ", \"earliest\": \"%s\"", stamp);
+        tmd_buf_addf(b, ", \"earliest_epoch\": %lld", (long long)s->earliest);
+        format_time_iso(&last, stamp, sizeof(stamp));
+        tmd_buf_addf(b, ", \"latest\": \"%s\"", stamp);
+        tmd_buf_addf(b, ", \"latest_epoch\": %lld", (long long)s->latest);
+        tmd_buf_addf(b, ", \"span_seconds\": %lld",
+                     (long long)(s->latest - s->earliest));
+    }
+    if (modal) {
+        tmd_buf_addf(b, ", \"most_common_epoch\": %lld, \"most_common_count\": %llu",
+                     (long long)modal->sec, (unsigned long long)modal->count);
+    }
+    tmd_buf_addf(b, ", \"missing\": %llu", (unsigned long long)s->no_time);
+    tmd_buf_addf(b, ", \"future\": %llu", (unsigned long long)s->future_time);
+    tmd_buf_addf(b, ", \"before_tar_existed\": %llu",
+                 (unsigned long long)s->pre_tar_time);
+    tmd_buf_addf(b, ", \"before_1970\": %llu",
+                 (unsigned long long)s->negative_time);
+    tmd_buf_addc(b, '}');
+
+    {
+        const char *verdict = stat_verdict(s);
+
+        if (verdict) {
+            tmd_buf_addstr(b, ", \"produced_by\": ");
+            tmd_json_escape(b, verdict);
+        }
+    }
+    tmd_buf_addc(b, '}');
+}
 
 void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a)
 {
@@ -1535,6 +2059,11 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
      * to mean nothing in any of the archives named on the command line. */
     rd->matched = 0;
     rd->seen = 0;
+
+    if (rd->opt->stats) {
+        stat_free(rd->stat);
+        rd->stat = tmd_xcalloc(1, sizeof(*rd->stat));
+    }
 
     struct tmd_buf b;
 
@@ -1640,7 +2169,18 @@ void tmd_render_entry(struct tmd_render *rd, const struct tmd_entry *e)
     rd->matched++;
     rd->matched_total++;
 
-    if (rd->opt->summary_only || rd->opt->info) {
+    /*
+     * Before the mode checks below, so --stat measures the members it was asked
+     * about. That means -m narrows what --stat describes, which is the opposite
+     * of what -m does to the summary -- deliberately. A summary answers "what
+     * is this file", which a filter cannot change; a distribution answers "what
+     * is in this set", which is exactly what a filter selects.
+     */
+    if (rd->stat) {
+        stat_note(rd->stat, e);
+    }
+
+    if (rd->opt->summary_only || rd->opt->info || rd->opt->stats) {
         return;
     }
     if (rd->opt->sort != TMD_SORT_NONE) {
@@ -1776,6 +2316,9 @@ void tmd_render_archive_end(struct tmd_render *rd, const struct tmd_archive *a)
     case TMD_OUT_CSV:
         break;
     case TMD_OUT_TEXT:
+        if (rd->opt->stats) {
+            text_stat(rd, a);
+        }
         if (rd->opt->info) {
             text_info(rd, a);
         } else if (rd->opt->summary_only || rd->opt->with_summary) {

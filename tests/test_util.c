@@ -359,6 +359,50 @@ static void test_path_matching(void)
     }
 }
 
+static void test_path_escapes(void)
+{
+    TEST_CASE("an ordinary path stays put");
+    CHECK(!tmd_path_escapes("etc/nginx/nginx.conf"));
+    CHECK(!tmd_path_escapes("./a/b"));
+    CHECK(!tmd_path_escapes("a/"));
+
+    TEST_CASE("an absolute path escapes");
+    CHECK(tmd_path_escapes("/etc/passwd"));
+    CHECK(tmd_path_escapes("//etc/passwd"));
+
+    TEST_CASE("a traversal that leaves the tree escapes");
+    CHECK(tmd_path_escapes("../etc/passwd"));
+    CHECK(tmd_path_escapes("a/../../etc/passwd"));
+    CHECK(tmd_path_escapes(".."));
+
+    /*
+     * The case a substring search for ".." gets wrong. `a/../b` extracts to
+     * `b`, squarely inside the current directory, and calling it a bomb would
+     * make the check cry wolf on archives that do this legitimately.
+     */
+    TEST_CASE("a traversal that comes back does not escape");
+    CHECK(!tmd_path_escapes("a/../b"));
+    CHECK(!tmd_path_escapes("a/b/../c"));
+    CHECK(!tmd_path_escapes("a/b/../.."));
+
+    TEST_CASE("a link target that leaves the tree escapes");
+    CHECK(tmd_link_escapes("link", "/etc/passwd"));
+    CHECK(tmd_link_escapes("link", "../outside"));
+    CHECK(tmd_link_escapes("a/link", "../../outside"));
+
+    /* A relative target is resolved against the directory the link is in, so
+     * how deep the link sits decides whether the same target escapes. */
+    TEST_CASE("a link target is resolved from the link's own directory");
+    CHECK(!tmd_link_escapes("a/b/link", "../c"));
+    CHECK(!tmd_link_escapes("a/b/link", "../../c"));
+    CHECK(tmd_link_escapes("a/b/link", "../../../c"));
+    CHECK(!tmd_link_escapes("a/link", "sibling"));
+
+    TEST_CASE("a member with no link target does not escape through one");
+    CHECK(!tmd_link_escapes("a/b", ""));
+    CHECK(!tmd_link_escapes("a/b", NULL));
+}
+
 void test_util(void)
 {
     test_numeric_fields();
@@ -372,4 +416,5 @@ void test_util(void)
     test_human_size();
     test_rounding();
     test_path_matching();
+    test_path_escapes();
 }

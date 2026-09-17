@@ -288,6 +288,97 @@ offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sor
 check "each copy reports a different offset" "$offsets" "2"
 
 # ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ extraction safety\033[0m\n'
+
+# An archive that would write outside the directory it is unpacked in. Built
+# here rather than described, because the point is that tmd answers the question
+# from the bytes, before anything has been extracted.
+mkdir -p bomb/safe
+echo ok > bomb/safe/a.txt
+ln -sf /etc/passwd bomb/out-abs
+ln -sf ../../../outside bomb/out-rel
+tar --format=gnu -cf bomb.tar -C bomb safe out-abs out-rel 2>/dev/null
+
+err="$("$TMD" -f bomb.tar 2>&1 >/dev/null)"
+check_contains "a link out of the tree is reported by default" "$err" \
+               "link target leaves the extraction directory"
+
+out="$("$TMD" -f bomb.tar -i 2>/dev/null)"
+check_contains "the info report names the escapes as a class" "$out" \
+               "would extract OUTSIDE the current directory"
+check_contains "and says how many links point out" "$out" "pointing outside"
+
+# A clean archive has to say so. Silence would read as "tmd did not look".
+out="$("$TMD" -f gnu.tar -i 2>/dev/null)"
+check_contains "a clean archive is stated to be clean" "$out" \
+               "every member stays inside the extraction directory"
+
+# An absolute path is a different class from a traversal.
+tar -cPf abs.tar /etc/hostname 2>/dev/null || true
+if [ -f abs.tar ]; then
+  err="$("$TMD" -f abs.tar 2>&1 >/dev/null)"
+  check_contains "an absolute path is reported" "$err" "absolute path"
+fi
+
+if command -v python3 > /dev/null 2>&1; then
+  verdict="$("$TMD" -f bomb.tar -S -t JSON 2>/dev/null | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["summary"]["extraction"]["escapes"])' 2>/dev/null)"
+  check "the JSON answers the whole question with one boolean" "$verdict" "True"
+  verdict="$("$TMD" -f gnu.tar -S -t JSON 2>/dev/null | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["summary"]["extraction"]["escapes"])' 2>/dev/null)"
+  check "and says False for an archive that is fine" "$verdict" "False"
+fi
+
+# ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ --stat\033[0m\n'
+
+# Three members sharing one second and one two minutes later: the shape a
+# release script leaves, and the case --stat exists to name.
+mkdir -p rel
+echo a > rel/one
+echo bb > rel/two
+echo ccc > rel/three
+touch -d "@1700000000" rel/one rel/two rel/three rel
+touch -d "@1700000120" rel/one
+tar --format=gnu -cf rel.tar rel 2>/dev/null
+
+out="$("$TMD" -f rel.tar --stat 2>/dev/null)"
+check_contains "--stat counts distinct timestamps, not members" "$out" "2 distinct"
+check_contains "--stat reports the span" "$out" "2 minutes"
+check_contains "--stat names the timestamp most members share" "$out" "most common"
+check_contains "--stat infers how the archive was produced" "$out" \
+               "exported into a fresh directory"
+check_contains "--stat reports the padding" "$out" "padding"
+check_contains "--stat lists the largest members" "$out" "largest"
+
+# It replaces the listing rather than adding to it.
+if printf '%s' "$out" | grep -q 'rel/one'; then
+  ok "--stat lists the largest members by path"
+else
+  bad "--stat did not name any member"
+fi
+
+# One timestamp everywhere is a different finding from a spread.
+touch -d "@1700000000" rel/one rel/two rel/three rel
+tar --format=gnu -cf norm.tar rel 2>/dev/null
+out="$("$TMD" -f norm.tar --stat 2>/dev/null)"
+check_contains "one timestamp for everything reads as normalized" "$out" "normalized"
+check_contains "and the span says so plainly" "$out" "every member shares one second"
+
+if command -v python3 > /dev/null 2>&1; then
+  distinct="$("$TMD" -f rel.tar --stat -t JSON 2>/dev/null | python3 -c '
+import json, sys
+print(json.load(sys.stdin)["summary"]["stat"]["timestamps"]["distinct"])' 2>/dev/null)"
+  check "--stat reaches the JSON" "$distinct" "2"
+fi
+
+# A filter narrows what the distribution describes.
+out="$("$TMD" -f rel.tar --stat -m 'one' 2>/dev/null)"
+check_contains "-m narrows the set --stat describes" "$out" "matched       1 of 4 members"
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ --sort\033[0m\n'
 
 # Read the path from CSV rather than from the listing: the last field of a

@@ -513,6 +513,99 @@ bool tmd_base64_decode(const char *s, struct tmd_buf *out)
 }
 
 /*
+ * Would extracting this write outside the directory you are standing in?
+ *
+ * Three ways an archive can do it, and the reason tmd is worth asking rather
+ * than `tar -t`: tar answers by extracting, which is too late.
+ *
+ *   /etc/passwd        an absolute path. GNU tar strips the leading slash by
+ *                      default and honors it under -P; bsdtar likewise. So
+ *                      whether this escapes depends on flags the person
+ *                      extracting may not think about.
+ *   ../../etc/passwd   a traversal. Counted by depth rather than by looking
+ *                      for "..", because a/../b does NOT escape and a
+ *                      substring match would say it does.
+ *   link -> /etc       a symlink out of the tree. The dangerous form is two
+ *                      members: a link pointing out, then a later member
+ *                      written through it.
+ *
+ * Depth is the honest test. Start at zero, add one for each real component,
+ * subtract one for each "..", and the moment it goes below zero the path has
+ * left the tree it started in -- whatever it does afterwards.
+ */
+static bool walk_depth(const char *s, long *depth)
+{
+    const char *p = s;
+
+    while (*p) {
+        const char *start = p;
+        size_t      len;
+
+        while (*p && *p != '/') {
+            p++;
+        }
+        len = (size_t)(p - start);
+        if (len == 2 && start[0] == '.' && start[1] == '.') {
+            --(*depth);
+            if (*depth < 0) {
+                return false;
+            }
+        } else if (len != 0 && !(len == 1 && start[0] == '.')) {
+            ++(*depth);
+        }
+        while (*p == '/') {
+            p++;
+        }
+    }
+    return true;
+}
+
+bool tmd_path_escapes(const char *path)
+{
+    long depth = 0;
+
+    if (!path || !path[0]) {
+        return false;
+    }
+    if (path[0] == '/') {
+        return true;
+    }
+    return !walk_depth(path, &depth);
+}
+
+bool tmd_link_escapes(const char *path, const char *target)
+{
+    long        depth = 0;
+    const char *slash;
+
+    if (!target || !target[0]) {
+        return false;
+    }
+    if (target[0] == '/') {
+        return true;
+    }
+    if (!path) {
+        return false;
+    }
+    /*
+     * A relative target is resolved against the directory the link sits in, so
+     * that is where the depth starts: "a/b/link -> ../../c" lands outside,
+     * while "a/b/link -> ../c" stays in.
+     */
+    slash = strrchr(path, '/');
+    if (slash) {
+        char *dir = tmd_xstrndup(path, (size_t)(slash - path));
+        bool  ok = walk_depth(dir, &depth);
+
+        free(dir);
+        if (!ok) {
+            return true; /* the link's own path already escapes */
+        }
+    }
+    return !walk_depth(target, &depth);
+}
+
+/*
  * find(1)'s rule, which is the one everybody already knows: a pattern with a
  * slash in it is matched against the whole stored path, a pattern without one
  * against the basename alone. So `nginx.conf` finds the file at any depth,

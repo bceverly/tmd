@@ -1721,6 +1721,34 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             }
         }
 
+        /*
+         * Does this member leave the directory it would be extracted into?
+         *
+         * Reported per member as a warning, so it is loud by default and shows
+         * up in -l and the machine formats, AND counted so the summary can say
+         * how many there are as a class. tmd never extracts, so this is the
+         * whole of what it can do about it -- but it is the question somebody
+         * pointing this at an untrusted archive most wants answered, and it is
+         * answered before anything has been written to disk.
+         */
+        if (e->path && e->path[0] == '/') {
+            r->archive.features.escape_absolute++;
+            warn_entry(e, "path-absolute",
+                       "absolute path: extracts to %s unless the leading "
+                       "slash is stripped", e->path);
+        } else if (tmd_path_escapes(e->path)) {
+            r->archive.features.escape_traversal++;
+            warn_entry(e, "path-escapes-directory",
+                       "path climbs out of the extraction directory");
+        }
+        if ((e->kind == TMD_KIND_SYMLINK || e->kind == TMD_KIND_HARDLINK) &&
+            tmd_link_escapes(e->path, e->linkpath)) {
+            r->archive.features.escape_link++;
+            warn_entry(e, "link-escapes-directory",
+                       "link target leaves the extraction directory: %s",
+                       e->linkpath ? e->linkpath : "");
+        }
+
         r->archive.entries++;
         r->archive.total_size += e->size;
         r->archive.total_stored += e->stored_size;

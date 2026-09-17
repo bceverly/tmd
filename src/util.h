@@ -104,6 +104,16 @@ bool  tmd_base64_decode(const char *s, struct tmd_buf *out);
  * be read, and a directory whose type character came from the mode would print
  * as a plain file.
  */
+/*
+ * Would extracting this member write outside the current directory?
+ *
+ * tmd_path_escapes covers absolute paths and ".." traversals; tmd_link_escapes
+ * covers a symlink or hard link whose target leaves the tree, resolved against
+ * the directory the link itself sits in.
+ */
+bool tmd_path_escapes(const char *path);
+bool tmd_link_escapes(const char *path, const char *target);
+
 /* find(1)'s matching rule: a pattern containing '/' is matched against the
  * whole path, one without it against the basename. Case-sensitive. */
 bool tmd_path_matches(const char *path, const char *pattern);

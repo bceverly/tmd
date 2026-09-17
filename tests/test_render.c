@@ -786,6 +786,199 @@ static void test_match_and_sort(void)
     free(out);
 }
 
+static void test_stat_mode(void)
+{
+    struct tmd_archive a;
+    struct tmd_entry   e[4];
+    struct tmd_options opt;
+    char              *out;
+    size_t             i;
+
+    memset(&a, 0, sizeof(a));
+    a.name = (char *)"t.tar";
+    a.format = TMD_FMT_PAX;
+    a.entries = 4;
+
+    for (i = 0; i < 4; i++) {
+        make_entry(&e[i]);
+        e[i].offset = i * 1024;
+    }
+    /* Three members share one second and the fourth is two minutes later --
+     * the shape a release script leaves behind. */
+    e[0].path = (char *)"a"; e[0].size = 10;   e[0].data_size = 10;   e[0].stored_size = 1024; e[0].mtime.sec = 1700000000;
+    e[1].path = (char *)"b"; e[1].size = 20;   e[1].data_size = 20;   e[1].stored_size = 1024; e[1].mtime.sec = 1700000000;
+    e[2].path = (char *)"c"; e[2].size = 30;   e[2].data_size = 30;   e[2].stored_size = 1024; e[2].mtime.sec = 1700000000;
+    e[3].path = (char *)"d"; e[3].size = 5000; e[3].data_size = 5000; e[3].stored_size = 5632; e[3].mtime.sec = 1700000120;
+
+    TEST_CASE("--stat counts the members and their bytes");
+    default_options(&opt);
+    opt.stats = true;
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "members       4");
+    CHECK_CONTAINS(out, "extracted     5060 bytes");
+    free(out);
+
+    /* 10, 20 and 30 bytes each occupy a whole 512-byte block; 5000 bytes takes
+     * ten and wastes 120. */
+    TEST_CASE("--stat reports the padding the archive spends");
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "padding       1596 bytes");
+    free(out);
+
+    TEST_CASE("--stat lists the largest members, biggest first");
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "5000  d");
+    CHECK(strstr(out, "5000  d") < strstr(out, "30  c"));
+    free(out);
+
+    TEST_CASE("--stat counts distinct timestamps, not members");
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "timestamps    2 distinct");
+    CHECK_CONTAINS(out, "span          2 minutes");
+    free(out);
+
+    TEST_CASE("--stat names the timestamp most members share");
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "most common");
+    CHECK_CONTAINS(out, "(3 of 4 members)");
+    free(out);
+
+    /* The inference is the half of --stat worth having, so it is pinned. */
+    TEST_CASE("--stat infers how the archive was produced");
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "exported into a fresh directory");
+    free(out);
+
+    TEST_CASE("one timestamp for every member reads as normalized");
+    for (i = 0; i < 4; i++) {
+        e[i].mtime.sec = 1700000000;
+    }
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "timestamps    1 distinct");
+    CHECK_CONTAINS(out, "normalized");
+    free(out);
+
+    TEST_CASE("every member at the epoch reads as discarded, not normalized");
+    for (i = 0; i < 4; i++) {
+        e[i].mtime.sec = 0;
+    }
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "timestamps were discarded");
+    free(out);
+
+    TEST_CASE("a member dated in the future is called out");
+    for (i = 0; i < 4; i++) {
+        e[i].mtime.sec = 1700000000;
+    }
+    e[0].mtime.sec = 4000000000LL; /* 2096 */
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "future        1 member dated in the FUTURE");
+    free(out);
+
+    TEST_CASE("a member older than tar itself is called out");
+    for (i = 0; i < 4; i++) {
+        e[i].mtime.sec = 1700000000;
+    }
+    e[0].mtime.sec = 100000; /* 1970 */
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "before tar existed");
+    free(out);
+
+    TEST_CASE("--stat reaches the JSON as its own object");
+    for (i = 0; i < 4; i++) {
+        e[i].mtime.sec = 1700000000;
+    }
+    default_options(&opt);
+    opt.stats = true;
+    opt.output = TMD_OUT_JSON;
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "\"stat\": {\"members\": 4");
+    CHECK_CONTAINS(out, "\"padding\": 1596");
+    CHECK_CONTAINS(out, "\"distinct\": 1");
+    CHECK_CONTAINS(out, "\"distinct_capped\": false");
+    free(out);
+
+    /*
+     * -m narrows what --stat describes. That is the opposite of what -m does to
+     * the summary, and deliberate: a summary answers "what is this file", a
+     * distribution answers "what is in this set".
+     */
+    TEST_CASE("-m narrows the set --stat describes");
+    {
+        const char *patterns[1];
+
+        default_options(&opt);
+        opt.stats = true;
+        patterns[0] = "d";
+        opt.match = patterns;
+        opt.nmatch = 1;
+        out = render_to_string(&opt, &a, e, 4);
+        CHECK_CONTAINS(out, "matched       1 of 4 members");
+        CHECK_CONTAINS(out, "members       1");
+        CHECK_CONTAINS(out, "extracted     5000 bytes");
+        free(out);
+    }
+}
+
+static void test_extraction_safety(void)
+{
+    struct tmd_archive a;
+    struct tmd_entry   e;
+    struct tmd_options opt;
+    char              *out;
+
+    memset(&a, 0, sizeof(a));
+    a.name = (char *)"t.tar";
+    a.format = TMD_FMT_PAX;
+    a.entries = 1;
+    make_entry(&e);
+
+    /*
+     * Stated even when there is nothing wrong. A reader pointing tmd at an
+     * untrusted archive is asking a yes/no question, and silence is not an
+     * answer to it -- it reads as "tmd did not look".
+     */
+    TEST_CASE("a clean archive says so rather than staying silent");
+    default_options(&opt);
+    opt.with_summary = true;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "every member stays inside the extraction directory");
+    free(out);
+
+    TEST_CASE("an escaping member is reported as a class");
+    a.features.escape_link = 1;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "would extract OUTSIDE the current directory");
+    CHECK_CONTAINS(out, "1 link pointing outside");
+    free(out);
+
+    TEST_CASE("each kind of escape is counted separately");
+    a.features.escape_absolute = 2;
+    a.features.escape_traversal = 3;
+    a.features.escape_link = 1;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "6 members would extract OUTSIDE");
+    CHECK_CONTAINS(out, "2 absolute");
+    CHECK_CONTAINS(out, "3 climbing out");
+    free(out);
+
+    /* A consumer should read one boolean, not infer safety from missing keys. */
+    TEST_CASE("the JSON carries a single boolean for the whole question");
+    default_options(&opt);
+    opt.output = TMD_OUT_JSON;
+    opt.with_summary = true;
+    memset(&a.features, 0, sizeof(a.features));
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"extraction\": {\"escapes\": false");
+    free(out);
+
+    a.features.escape_traversal = 1;
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, "\"extraction\": {\"escapes\": true");
+    CHECK_CONTAINS(out, "\"traversals\": 1");
+    free(out);
+}
+
 void test_render(void)
 {
     test_listing_line();
@@ -794,4 +987,6 @@ void test_render(void)
     test_extreme_timestamps();
     test_exhaustive_json();
     test_match_and_sort();
+    test_stat_mode();
+    test_extraction_safety();
 }
