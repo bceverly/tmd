@@ -258,7 +258,15 @@ check_contains "the usage shows the stdin form" "$(cat help.txt)" "| tmd"
 # script(1) allocates one; where it is missing the check is skipped rather than
 # silently dropped.
 if command -v script > /dev/null 2>&1; then
-  tty_out="$(script -qec "$TMD" /dev/null 2>/dev/null | head -1)"
+  # `< /dev/null` and a grep over the WHOLE output, not `head -1`.
+  #
+  # script(1) copies its own stdin into the pty it allocates, and the pty
+  # echoes what arrives — so whatever this suite inherited on stdin comes back
+  # as the first line of output. Run from a git pre-push hook, that is git's
+  # list of refs being pushed, and this check compared the banner against
+  # "refs/heads/main 1c44b07 ...". Feeding script an empty stdin stops the
+  # echo; grepping the whole output means an echo could not fool it anyway.
+  tty_out="$(script -qec "$TMD" /dev/null < /dev/null 2>/dev/null)"
   check_contains "a bare tmd at a terminal shows the usage" \
                  "$tty_out" "dump the metadata out of a tar archive"
 else
