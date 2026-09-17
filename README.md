@@ -882,7 +882,7 @@ more attacker-reachable code and another CVE feed to watch. It also means a
 Launchpad builder — which has no network — can build the package from source
 alone, with no vendoring.
 
-**It runs the system's decompressor.** Since v1.5.0.0 tmd reads `.tar.gz`,
+**It runs the system's decompressor.** Since v1.6.0.0 tmd reads `.tar.gz`,
 `.tar.xz`, `.tar.bz2`, `.tar.zst` and several more directly, by executing
 `gzip -dc`, `xz -dc` and friends as separate processes — the same thing GNU tar
 does when you pass it `-z`. So those tools are **runtime** dependencies, and the
@@ -921,10 +921,13 @@ program that links nothing.
 are not true everywhere: the machine is little-endian, `time_t` is 64 bits, and
 plain `char` is signed. tmd is written not to care — every header field is
 decoded byte by byte, so there is not a single multi-byte load in the program —
-and since v1.5.0.0 a `Tests (aarch64)` job on GitHub's native arm runners proves
+and since v1.6.0.0 a `Tests (aarch64)` job on GitHub's native arm runners proves
 part of it: `char` is unsigned there, and the ABI is different. It is still
-little-endian, so a genuine byte-order bug would survive it; a qemu-based
-big-endian leg would catch one and is on the [roadmap](ROADMAP.md).
+little-endian, so a genuine byte-order bug would survive it. A qemu-based
+big-endian leg would catch one and was
+[considered and declined](ROADMAP.md#a-big-endian-ci-leg): there is not a single
+multi-byte load in the program, so the property is true by construction, and an
+emulated leg runs too slowly to sit on every push.
 
 **End-to-end tests** do the opposite: they build archives with the real `tar`
 and `bsdtar`, in every format each can write, and check that `tmd`'s listing

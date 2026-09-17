@@ -82,7 +82,14 @@ printf '\ntmd end-to-end tests\n'
 
 # ---------------------------------------------------------------------------
 # A tree with one of everything a tar header can describe.
+#
+# umask is set first, so that the permission bits the fixtures end up with are
+# the same everywhere. Without it a file is 0664 on a machine with umask 002 and
+# 0644 on one with umask 022, and any check that names a mode passes on one and
+# fails on the other. The tests that care about umask set their own, in a
+# subshell.
 # ---------------------------------------------------------------------------
+umask 022
 mkdir -p tree/sub/deep
 echo "hello world" > tree/hello.txt
 printf 'x%.0s' $(seq 1 5000) > tree/sub/big.bin
@@ -384,6 +391,11 @@ mkdir -p dtree
 echo "original"      > dtree/keep.txt
 echo "small"         > dtree/changes.txt
 echo "gone"          > dtree/removed.txt
+# The starting mode is set, not inherited. A new file is 0664 under umask 002
+# and 0644 under umask 022, so asserting on whichever this machine happens to
+# use is a test that passes at home and fails on somebody else's runner --
+# which is exactly what it did.
+chmod 644 dtree/keep.txt
 touch -d "@1700000000" dtree/keep.txt dtree/changes.txt dtree/removed.txt dtree
 tar --format=gnu -cf old.tar dtree 2>/dev/null
 
@@ -398,7 +410,7 @@ out="$("$TMD" -f old.tar -f new.tar --diff 2>/dev/null)"
 check_contains "--diff reports an added member" "$out" "+ dtree/added.txt"
 check_contains "--diff reports a removed member" "$out" "- dtree/removed.txt"
 check_contains "--diff names the field that changed" "$out" "size 6 -> 26"
-check_contains "--diff notices a mode change" "$out" "mode 0664 -> 0600"
+check_contains "--diff notices a mode change" "$out" "mode 0644 -> 0600"
 
 # Sorted by path, so a comparison can be diffed against itself.
 first="$("$TMD" -f old.tar -f new.tar --diff 2>/dev/null | sed -n '3p')"

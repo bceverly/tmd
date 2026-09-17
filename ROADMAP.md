@@ -18,7 +18,7 @@ asked of a roadmap a year later.
 
 | Item | Status |
 |---|---|
-| [Read compressed archives directly](#read-compressed-archives-directly-v1500) | **Shipped** in v1.5.0.0 |
+| [Read compressed archives directly](#read-compressed-archives-directly-v1600) | **Shipped** in v1.6.0.0 |
 | [`--diff` between two archives](#--diff-between-two-archives-v1500) | **Shipped** in v1.5.0.0 |
 | [`--verify` against a manifest](#--verify-against-a-manifest-v1500) | **Shipped** in v1.5.0.0 |
 | [Promote `LIBARCHIVE.creationtime` to a `created` line](#promote-libarchivecreationtime-to-a-created-line-v1500) | **Shipped** in v1.5.0.0 |
@@ -29,30 +29,37 @@ asked of a roadmap a year later.
 | [Find a member by name: `-m` / `--match`](#find-a-member-by-name--m----match-pattern-v1300) | **Shipped** in v1.3.0.0 |
 | [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
-| [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1500) | **aarch64 shipped** in v1.5.0.0; big-endian still open |
+| [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600) | **aarch64 shipped** in v1.6.0.0; [big-endian declined](#a-big-endian-ci-leg) |
 
-One and a half open, eleven and a half shipped, none declined.
+Nothing open. Twelve shipped, one declined.
 
-The half is *More architectures in CI*: the aarch64 leg is running, and the
-qemu-based big-endian leg it also asked for is not.
+The roadmap has been worked through. New ideas go under
+[Other ideas](#other-ideas); anything decided against goes to
+[Considered and declined](#considered-and-declined) with the reason, so it does
+not come back as a suggestion a year from now.
 
 The minor moves each time the command line grows — the rule v1.2.0.0 set when
-`-t` was added. v1.5.0.0 adds `--diff` and `--verify`, a new exit status (5),
-and three items that add no switch at all but do add JSON keys. They ship
-together rather than as five releases, because a minor version is the unit being
-spent either way.
+`-t` was added. v1.5.0.0 took `--diff`, `--verify` and exit status 5 together
+with three items that added no switch but did add JSON keys, because a minor
+version is the unit being spent either way. v1.6.0.0 adds no switch at all:
+compressed archives are recognized by content, so nothing new had to be typed —
+but it changes what `tmd -f a.tar.gz` *does*, and adds a runtime dependency the
+package declares, which is more than a patch should carry.
 
 ---
 
 ## Other ideas
 
-Unordered, and none of them thought through as far as the item above.
+*(nothing yet)*
+
+Sketches go here first — unordered, and not thought through as far as a worked
+item. Everything that was here has shipped.
 
 ---
 
 ## Shipped
 
-### Read compressed archives directly (v1.5.0.0)
+### Read compressed archives directly (v1.6.0.0)
 
 **What shipped:** `.tar.gz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`,
 `.tar.lz` and `.tar.Z`, recognized by content rather than extension and unpacked
@@ -93,7 +100,7 @@ Depends, `bzip2` and `zstd` as Recommends, `lz4` and `lzip` as Suggests. `gzip`
 is deliberately absent — it is Essential on every Debian system, and depending
 on an essential package is a Policy violation lintian rejects.
 
-### More architectures in CI — the aarch64 half (v1.5.0.0)
+### More architectures in CI — the aarch64 half (v1.6.0.0)
 
 **What shipped:** a `Tests (aarch64)` job on GitHub's native arm runners,
 building and running the unit and end-to-end suites there.
@@ -388,4 +395,39 @@ long-name member is the `L` header and not the block `raw` describes, so
 
 ## Considered and declined
 
-*(nothing yet)*
+### A big-endian CI leg
+
+**The idea:** every job runs on x86-64, which is little-endian. tmd claims to be
+endian-clean; a qemu-based `s390x` or `ppc64` leg would prove it.
+
+**Declined, after shipping the aarch64 half of the same item** (see
+[More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600)),
+because the return does not justify what it costs to run.
+
+The property it would test is true *by construction*, and checkably so: there is
+not a single multi-byte load in the program. Every numeric field in a tar header
+goes through `parse_octal` or `parse_base256`, both of which walk bytes one at a
+time and shift them into place. No `memcpy` into an integer, no cast of a
+`char *` to a wider pointer, no `htonl`. A byte-order bug has nowhere to live.
+
+Against that: qemu emulation runs ten to fifty times slower, so the leg could
+not run on every push — it would be a weekly job running a subset, which is the
+kind of check that goes red on a Tuesday and gets looked at on a Friday.
+
+**What was kept instead.** The aarch64 leg, which is native, costs no more than
+the x86 legs, and moves a variable that x86 cannot: plain `char` is unsigned
+there. That is a real difference with real bugs attached, and it runs on every
+push.
+
+**If this is ever revisited, pick 32-bit over big-endian.** An `i386` or `armhf`
+leg costs the same emulation and exercises live code rather than proving
+something already true: `render.c` guards a `time_t` narrower than 64 bits with
+
+```c
+seconds = (time_t)t->sec;
+if ((int64_t)seconds != t->sec)     /* print the raw seconds instead */
+```
+
+and on x86-64 and aarch64 alike that branch is unreachable. A 32-bit leg would
+be the first thing ever to run it — and it sits in the same function where a
+timestamp bug has already been found once.
