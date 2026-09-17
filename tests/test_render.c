@@ -419,9 +419,102 @@ static void test_output_formats(void)
     }
 }
 
+/*
+ * Timestamps at the edge of what strftime can render.
+ *
+ * A tar header carries a 64-bit mtime, and GNU base-256 numeric fields make a
+ * huge one easy to write -- GNU tar itself will list a member dated in the year
+ * 999338027 without complaint -- so "%Y" is not always four digits.
+ *
+ * When the conversion did not fit, strftime returned 0 and left the buffer
+ * *unspecified* (C11 7.27.3.5), and this file printed it anyway with "%s".
+ * On a quiet stack that showed up as a timestamp with its seconds missing,
+ * "00:00:Z"; on a dirty one it read off the end of a 24-byte array, which is
+ * how libFuzzer found it -- a 29-byte read out of `stamp`.
+ *
+ * These pin both halves. The strings check that the rendering is complete;
+ * running them under ASan in `make test` checks that nothing is read past the
+ * buffer.
+ */
+static void test_extreme_timestamps(void)
+{
+    struct tmd_entry   e;
+    struct tmd_options opt;
+    char              *line;
+
+    TEST_CASE("a nine-digit year renders in full");
+    default_options(&opt);
+    make_entry(&e);
+    e.mtime.sec = 31536000000000000LL;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "999338027-07-21 00:00:00Z");
+    free(line);
+
+    /*
+     * This is the value the fuzzer reached. It matters that it is this one:
+     * the conversion is long enough that glibc stops part-way through the
+     * seconds field and leaves no terminator anywhere in 24 bytes, where a
+     * slightly shorter one happens to leave a zero byte and looks fine.
+     */
+    TEST_CASE("--full-time keeps the seconds on a nine-digit year");
+    default_options(&opt);
+    opt.full_time = true;
+    make_entry(&e);
+    e.mtime.sec = 3155729985192635LL;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "100003072-04-19 09:30:35Z");
+    free(line);
+
+    TEST_CASE("nanoseconds survive a nine-digit year");
+    default_options(&opt);
+    opt.full_time = true;
+    make_entry(&e);
+    e.mtime.sec = 3155729985192635LL;
+    e.mtime.nsec = 123456789;
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "100003072-04-19 09:30:35.123456789Z");
+    free(line);
+
+    TEST_CASE("the ISO formats render a nine-digit year too");
+    {
+        struct tmd_archive a;
+        char              *out;
+
+        memset(&a, 0, sizeof(a));
+        a.name = (char *)"big.tar";
+        a.format = TMD_FMT_PAX;
+        default_options(&opt);
+        opt.output = TMD_OUT_JSON;
+        make_entry(&e);
+        e.mtime.sec = 3155729985192635LL;
+        out = render_to_string(&opt, &a, &e, 1);
+        CHECK_CONTAINS(out, "100003072-04-19T09:30:35Z");
+        free(out);
+    }
+
+    /*
+     * Past what a struct tm can hold, tm_year overflows and the year comes back
+     * negative. There is no right answer to print, but there is a wrong one:
+     * crashing, or reading past a buffer. Only that nothing blows up is
+     * asserted -- the exact text is glibc's business, not this program's.
+     */
+    TEST_CASE("an mtime past what struct tm can hold does not misbehave");
+    default_options(&opt);
+    opt.full_time = true;
+    make_entry(&e);
+    e.mtime.sec = 67768036191676799LL;
+    /* tmd_render_listing_line allocates through tmd_xmalloc, which exits
+     * rather than returning NULL, so the line is checked for content and not
+     * for a null pointer that cannot arrive. */
+    line = tmd_render_listing_line(&e, &opt);
+    CHECK_CONTAINS(line, "src/main.c");
+    free(line);
+}
+
 void test_render(void)
 {
     test_listing_line();
     test_json_escaping();
     test_output_formats();
+    test_extreme_timestamps();
 }

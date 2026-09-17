@@ -43,6 +43,50 @@ struct tmd_render {
  * the number is what the archive actually says, and hiding it would lose the
  * only evidence that the field is wrong.
  */
+/*
+ * strftime(3), with a result that is safe to print.
+ *
+ * strftime returns 0 when the conversion does not fit, and C11 7.27.3.5 leaves
+ * the buffer's contents *unspecified* in that case. Not truncated and
+ * terminated, not emptied: unspecified, with no terminator promised. Every
+ * caller below hands the buffer straight to "%s", so a conversion that did not
+ * fit read off the end of a 24-byte stack array and kept going until it found
+ * a zero byte -- a 29-byte read out of a 24-byte `stamp`, which is what
+ * libFuzzer eventually caught.
+ *
+ * It needs no exotic archive. "%Y" is four digits only for the years anybody
+ * expects; a tar header carries a 64-bit mtime, GNU base-256 numeric fields
+ * make a huge one easy to write, and GNU tar itself will list such a member
+ * without complaint. Whether the overflow actually fired depended on what
+ * happened to be on the stack underneath, which is why it took a long fuzz run
+ * to surface rather than a single case.
+ *
+ * Returns false when nothing was written. A zero return is unambiguous here
+ * because none of the formats in this file can legitimately produce an empty
+ * string.
+ */
+/*
+ * A macro rather than a function, for two reasons.
+ *
+ * The format stays a literal at every call site, so both compilers keep
+ * checking it -- which is not a thing to give up in the one function this bug
+ * was in. And a wrapper function cannot satisfy -Wformat-nonliteral here
+ * anyway: GCC does not honor format(strftime, N, 0) the way it honors the
+ * printf archetype, and warns inside the wrapper wherever the attribute is
+ * placed (checked on GCC 15; clang accepts it).
+ *
+ * The buffer is deliberately left alone when the conversion does not fit.
+ * Every caller below replaces the destination with something honest -- the raw
+ * seconds, or an empty string -- so a buffer that is never read does not need
+ * terminating, and terminating it here would put an assignment inside an `if`
+ * condition, which this file avoids: it reads as a comparison typo even when it
+ * is not one.
+ *
+ * What must never happen is printing a buffer this returned false for. That is
+ * precisely what the bug was.
+ */
+#define TIME_FITS(buf, size, fmt, tm) (strftime((buf), (size), (fmt), (tm)) != 0)
+
 static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
                         char *buf, size_t bufsz)
 {
@@ -76,31 +120,43 @@ static void format_time(const struct tmd_time *t, const struct tmd_options *opt,
      * reader asked for local and here is what that was worth.
      */
     if (opt->full_time) {
-        char stamp[24]; /* "YYYY-MM-DD HH:MM:SS" is 19 */
-        char zone[8];   /* "+HHMM" is 5 */
+        /* Sized for the widest struct tm a platform can hold: tm_year is an
+         * int, so the year runs to 10 digits and the stamp to 25 characters.
+         * The guard below stays regardless -- the buffer being large enough is
+         * a property of this file, and the terminator is not. */
+        char stamp[32];
+        char zone[16];  /* " +HHMM", or " +HH:MM" where a platform emits it */
         /* Reduced modulo a second so the compiler can see that %09u is nine
          * digits and not ten. A nanosecond field over 999999999 is malformed
          * anyway, and showing it as a second's worth of nanoseconds is closer
          * to the truth than showing it as a wider number. */
         unsigned nsec = t->nsec % 1000000000u;
 
-        (void)strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm);
-        if (opt->local)
-            (void)strftime(zone, sizeof(zone), " %z", tm);
-        else
+        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm)) {
+            (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
+            return;
+        }
+        if (opt->local) {
+            /* No offset is better than a wrong one. */
+            if (!TIME_FITS(zone, sizeof(zone), " %z", tm))
+                zone[0] = '\0';
+        } else {
             (void)snprintf(zone, sizeof(zone), "Z");
+        }
 
         if (nsec)
             (void)snprintf(buf, bufsz, "%s.%09u%s", stamp, nsec, zone);
         else
             (void)snprintf(buf, bufsz, "%s%s", stamp, zone);
     } else if (opt->local) {
-        char stamp[24];
+        char stamp[32];
 
-        (void)strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm);
-        (void)snprintf(buf, bufsz, "%s", stamp);
-    } else {
-        (void)strftime(buf, bufsz, "%Y-%m-%d %H:%M:%SZ", tm);
+        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", tm))
+            (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
+        else
+            (void)snprintf(buf, bufsz, "%s", stamp);
+    } else if (!TIME_FITS(buf, bufsz, "%Y-%m-%d %H:%M:%SZ", tm)) {
+        (void)snprintf(buf, bufsz, "@%lld", (long long)t->sec);
     }
 }
 
@@ -126,13 +182,21 @@ static void format_time_iso(const struct tmd_time *t, char *buf, size_t bufsz)
         return;
     }
     if (t->nsec) {
-        char     stamp[24]; /* "YYYY-MM-DDTHH:MM:SS" is 19 */
-        unsigned nsec = t->nsec % 1000000000u;
+        char stamp[32]; /* a 10-digit year makes this 25 characters */
 
-        (void)strftime(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S", tm);
-        (void)snprintf(buf, bufsz, "%s.%09uZ", stamp, nsec);
-    } else {
-        (void)strftime(buf, bufsz, "%Y-%m-%dT%H:%M:%SZ", tm);
+        /* An empty string is this function's existing way of saying "cannot be
+         * represented"; see the !present branch above. */
+        if (!TIME_FITS(stamp, sizeof(stamp), "%Y-%m-%dT%H:%M:%S", tm)) {
+            buf[0] = '\0';
+        } else {
+            /* Reduced modulo a second so the compiler can see that %09u is
+             * nine digits and not ten. */
+            unsigned nsec = t->nsec % 1000000000u;
+
+            (void)snprintf(buf, bufsz, "%s.%09uZ", stamp, nsec);
+        }
+    } else if (!TIME_FITS(buf, bufsz, "%Y-%m-%dT%H:%M:%SZ", tm)) {
+        buf[0] = '\0';
     }
 }
 

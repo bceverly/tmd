@@ -39,6 +39,27 @@ cd "$REPO_ROOT" || exit 1
 BASE="$(cat VERSION 2>/dev/null || echo "0.0.0.0")"
 SUFFIX=""
 
+# TMD_VERSION_NO_GIT=1 skips the repository probe entirely.
+#
+# This one line is the only thing in the whole build that runs git, and it makes
+# `make build`, `make lint` and `make test` unusable anywhere git is unavailable
+# or not permitted -- a locked-down sandbox, a build that must not shell out, a
+# tool whose policy blocks it. None of those targets needs a repository to do
+# its job; they need a version string.
+#
+# "-dev" is the honest answer here, and the same one the probe below gives for
+# any tree that is not exactly a tag. Without git there is no way to establish
+# that this tree IS the release, and printing a clean version that cannot be
+# verified is the one answer that could mislead -- it would put an unreleased
+# build's number on a bug report as though anyone could download it.
+#
+# `make release` does not set it, so releases still prove themselves the usual
+# way.
+if [ "${TMD_VERSION_NO_GIT:-0}" = "1" ]; then
+  printf '%s-dev\n' "$BASE"
+  exit 0
+fi
+
 is_release_tree() {
   command -v git > /dev/null 2>&1 || return 1
   git rev-parse --git-dir > /dev/null 2>&1 || return 1

@@ -75,6 +75,28 @@ SAN=("-fsanitize=address,undefined" -fno-sanitize-recover=all
 SOURCES=(src/util.c src/source.c src/tar.c src/render.c tests/fuzz/fuzz_tar.c)
 
 # ---------------------------------------------------------------------------
+# Symbolization.
+#
+# Without llvm-symbolizer a sanitizer report is a column of hex offsets and
+# nothing else -- the crash still has to be turned into a file and a line by
+# hand, with addr2line, after the fact. The runtime only finds the symbolizer
+# if it is on PATH or named outright, and the Debian packages put it in a
+# versioned directory that is on neither.
+if [ -z "${ASAN_SYMBOLIZER_PATH:-}" ]; then
+  SYMBOLIZER="$(command -v llvm-symbolizer 2>/dev/null || true)"
+  if [ -z "$SYMBOLIZER" ]; then
+    SYMBOLIZER="$(find /usr/lib -maxdepth 3 -name llvm-symbolizer -type f 2>/dev/null \
+                  | sort -V | tail -1)"
+  fi
+  if [ -n "$SYMBOLIZER" ]; then
+    export ASAN_SYMBOLIZER_PATH="$SYMBOLIZER"
+  else
+    note "llvm-symbolizer is not installed; a crash report will be hex offsets"
+    note "install it with: make install-dev"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # libFuzzer, when clang is here
 # ---------------------------------------------------------------------------
 if command -v clang > /dev/null 2>&1 && [ "${FUZZ_ENGINE:-auto}" != "builtin" ]; then
@@ -93,7 +115,16 @@ if command -v clang > /dev/null 2>&1 && [ "${FUZZ_ENGINE:-auto}" != "builtin" ];
     else
       bad "libFuzzer found a crash"
       note "the failing input is under $WORK/findings/"
-      tail -30 "$WORK/libfuzzer.log" | sed 's/^/      /'
+      # NOT `tail`. The end of a sanitizer report is the shadow-byte legend --
+      # the same forty lines of boilerplate every time, saying nothing about
+      # this crash -- and tailing it buried the one part that matters. What a
+      # reader needs is the ERROR line, the frames beneath it, and the frame
+      # layout that names the variable, all of which come first.
+      awk '/ERROR: (Address|Leak|Memory|Thread)Sanitizer|runtime error:/ { p = 1 }
+           /Shadow bytes around/ || /^SUMMARY:/ { p = 0 }
+           p' "$WORK/libfuzzer.log" | head -40 | sed 's/^/      /'
+      grep -m1 'SUMMARY:' "$WORK/libfuzzer.log" | sed 's/^/      /' || true
+      note "reproduce it with: $WORK/fuzz-libfuzzer <the file above>"
       exit 1
     fi
   else

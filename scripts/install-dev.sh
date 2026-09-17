@@ -43,6 +43,7 @@ if ! command -v apt-get > /dev/null 2>&1; then
   printf '    coverage    gcov (ships with gcc), gcovr for the XML report\n'
   printf '    lint        cppcheck clang-tidy shellcheck\n'
   printf '    security    clang-tools (scan-build) flawfinder semgrep gitleaks\n'
+  printf '    fuzzing     clang libclang-rt-dev llvm (llvm-symbolizer)\n'
   printf '    packaging   debhelper devscripts dput lintian\n\n'
   exit 0
 fi
@@ -74,6 +75,11 @@ PACKAGES=(
   # and scripts/fuzz.sh quietly falls back to the weaker built-in mutator.
   # Quietly is the problem -- it looks like a passing fuzz run either way.
   libclang-rt-dev
+  # Without this a sanitizer crash reports hex offsets instead of a file and a
+  # line, and every report has to be run back through addr2line by hand. It is
+  # a separate package from clang, and easy not to notice is missing until the
+  # first crash.
+  llvm                     # llvm-symbolizer
   # --- what this script itself needs ---------------------------------------
   curl                     # fetching the pinned gitleaks release
   pipx                     # semgrep is Python, and apt has no current package
