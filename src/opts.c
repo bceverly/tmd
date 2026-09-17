@@ -113,7 +113,8 @@ void tmd_print_usage(FILE *out)
 
     (void)fprintf(out, "tmd %s — dump the metadata out of a tar archive\n", TMD_VERSION);
     (void)fprintf(out, "%s\n\n", TMD_COPYRIGHT);
-    (void)fprintf(out, "Usage: tmd -f FILE [OPTION]...\n\n");
+    (void)fprintf(out, "Usage: tmd -f FILE [OPTION]...\n");
+    (void)fprintf(out, "       tmd [OPTION]... < FILE      (or: ... | tmd)\n\n");
     (void)fprintf(out,
         "Reads a tar archive and reports what is inside it without extracting\n"
         "anything: one ls -l style line per member by default, or every header\n"
@@ -177,7 +178,7 @@ void tmd_print_usage(FILE *out)
                   "write the report to a file");
     (void)fprintf(out, "  %-38s %s\n", "tmd -f archive.tar --format=json",
                   "machine-readable output for a script");
-    (void)fprintf(out, "  %-38s %s\n", "gzip -dc a.tar.gz | tmd -f -",
+    (void)fprintf(out, "  %-38s %s\n", "gzip -dc a.tar.gz | tmd",
                   "read a compressed archive through a pipe");
 
     (void)fprintf(out, "\nReport bugs at https://github.com/bceverly/tmd\n");
@@ -211,20 +212,26 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
     memset(cli, 0, sizeof(*cli));
 
     /*
-     * A bare `tmd` prints the help and succeeds.
+     * A bare `tmd` AT A TERMINAL prints the help and succeeds.
      *
      * The alternative — "missing required option -f", exit 2 — is what a strict
-     * reading of the option table gives, and it is the wrong answer for the
-     * one case where somebody has typed the name of a tool to find out what it
+     * reading of the option table gives, and it is the wrong answer for the one
+     * case where somebody has typed the name of a tool to find out what it
      * does. Every other missing or wrong argument is still an error.
+     *
+     * "At a terminal" is what makes this compatible with reading a pipe. When
+     * standard input is not a tty somebody has redirected something into it and
+     * means for it to be read — printing the help at them instead would be
+     * useless, and worse, it would exit 0 having done nothing, so a pipeline
+     * would look as though it had worked.
      */
-    if (argc <= 1) {
+    if (argc <= 1 && isatty(STDIN_FILENO)) {
         cli->want_help = true;
         return TMD_EXIT_OK;
     }
 
-    /* Room for at most one -f per argument. */
-    cli->files = tmd_xcalloc((size_t)argc, sizeof(*cli->files));
+    /* Room for one -f per argument, plus the implicit stdin below. */
+    cli->files = tmd_xcalloc((size_t)argc + 1, sizeof(*cli->files));
 
     opterr = 1;
     /* Flawfinder objects to getopt_long on the grounds that "some older
@@ -310,8 +317,21 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
                          "(did you mean: tmd -f %s?)",
                          argv[optind], argv[optind]);
 
-    if (cli->nfiles == 0)
-        return bad_usage("no archive given — use -f FILE (or -f - to read a pipe)");
+    if (cli->nfiles == 0) {
+        /*
+         * No -f, so read standard input — unless it is a terminal, in which
+         * case there is nothing there and waiting for a tar archive to be typed
+         * in is not a helpful way to spend the afternoon.
+         *
+         * This is what makes `gzip -dc a.tar.gz | tmd` and `tmd < a.tar` work.
+         * `-f -` still means the same thing and is worth keeping for scripts
+         * that would rather be explicit.
+         */
+        if (isatty(STDIN_FILENO))
+            return bad_usage("no archive given — use -f FILE, or pipe one in "
+                             "(gzip -dc a.tar.gz | tmd)");
+        cli->files[cli->nfiles++] = "-";
+    }
 
     /*
      * Color is decided here rather than at the point of printing, because the

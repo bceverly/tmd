@@ -242,9 +242,28 @@ check "csv has one row per member" "$csv_rows" "$tar_rows"
 # ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ the command line\033[0m\n'
 
-"$TMD" > help.txt 2>&1
-check_status "a bare tmd shows the usage and succeeds" "$?" 0
-check_contains "the usage names the required -f" "$(cat help.txt)" "-f, --file=FILE"
+# The usage text itself, via the explicit flag.
+#
+# Deliberately NOT a bare `tmd` here. Now that no -f means "read standard
+# input", a bare invocation only prints the usage when stdin is a TERMINAL —
+# and stdin in a test harness is a pipe or a file, so a bare `tmd` would sit
+# there waiting for a tar archive to arrive. It did, for two minutes, which is
+# how this test found out.
+"$TMD" --help > help.txt 2>&1
+check_status "--help succeeds" "$?" 0
+check_contains "the usage names -f" "$(cat help.txt)" "-f, --file=FILE"
+check_contains "the usage shows the stdin form" "$(cat help.txt)" "| tmd"
+
+# And the bare-invocation-at-a-terminal behavior, which needs an actual tty.
+# script(1) allocates one; where it is missing the check is skipped rather than
+# silently dropped.
+if command -v script > /dev/null 2>&1; then
+  tty_out="$(script -qec "$TMD" /dev/null 2>/dev/null | head -1)"
+  check_contains "a bare tmd at a terminal shows the usage" \
+                 "$tty_out" "dump the metadata out of a tar archive"
+else
+  note "script(1) is not installed — the bare-tmd-at-a-tty check is skipped"
+fi
 check_contains "the usage shows the copyright" "$(cat help.txt)" "Bryan C. Everly"
 
 check "--help matches the no-argument output" \
@@ -287,6 +306,34 @@ check "-o creates the report 0644 even under umask 000" \
 ( umask 077 && "$TMD" -f gnu.tar -o strict.txt > /dev/null 2>&1 )
 check "-o honors a stricter umask" \
       "$(stat -c %a strict.txt 2>/dev/null)" "600"
+
+# No -f at all: standard input is read when it is not a terminal.
+#
+# This is the `gzip -dc a.tar.gz | tmd` form. It has to coexist with a bare
+# `tmd` printing the usage, and the thing that separates them is whether stdin
+# is a tty — which is why these tests pipe and redirect rather than just
+# running the binary.
+check "no -f, piped: reads standard input" \
+      "$(cat gnu.tar | "$TMD" 2>/dev/null)" "$("$TMD" -f gnu.tar 2>/dev/null)"
+check "no -f, redirected: reads standard input" \
+      "$("$TMD" < gnu.tar 2>/dev/null)" "$("$TMD" -f gnu.tar 2>/dev/null)"
+# The summary too, with the archive's own name dropped: that line is the one
+# thing that SHOULD differ, since a pipe has no name to report. Everything else
+# must match, including the byte count -- for a pipe there is no length until
+# the stream ends, so it is measured while reading rather than stat'd, and the
+# two have to agree.
+check "no -f, piped, with options" \
+      "$(cat gnu.tar | "$TMD" -s 2>/dev/null | tail -n +3)" \
+      "$("$TMD" -f gnu.tar -s 2>/dev/null | tail -n +3)"
+check "a piped archive reports the same size as the same file" \
+      "$(cat gnu.tar | "$TMD" -s 2>/dev/null | grep '^  archive')" \
+      "$("$TMD" -f gnu.tar -s 2>/dev/null | grep '^  archive')"
+
+# With stdin closed off and no tty, an empty stream is an empty archive rather
+# than a silent success — a pipeline that produced nothing must not look as
+# though it worked.
+"$TMD" < /dev/null > /dev/null 2>&1
+check_status "no -f with an empty stdin is an error, not a silent pass" "$?" 1
 
 # Reading a pipe.
 #

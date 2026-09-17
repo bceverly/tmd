@@ -1104,6 +1104,24 @@ static int fail_not_tar(struct tmd_reader *r, const char block[TMD_BLOCK_SIZE],
                 r->archive.name);
 }
 
+/*
+ * The archive is over: record how long it turned out to be.
+ *
+ * For a regular file the length came from fstat before a byte was read. A pipe
+ * has no length until it ends — so it is filled in here, from the offset the
+ * source reached, which is exactly the number of bytes consumed. Without this
+ * the summary fell back to the sum of the members' stored sizes, which omits
+ * the two-block end-of-archive marker and any record padding after it: the same
+ * archive read from a file and from a pipe reported sizes 2560 bytes apart.
+ */
+static int end_of_archive(struct tmd_reader *r)
+{
+    r->finished = true;
+    if (r->archive.file_size == 0)
+        r->archive.file_size = tmd_source_offset(r->src);
+    return 0;
+}
+
 int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
 {
     char     block[TMD_BLOCK_SIZE];
@@ -1128,8 +1146,7 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
          * iteration that does not produce an entry is counted. */
         if (++extension_guard > 1000) {
             warn_archive(r, "over 1000 extension headers for one member — giving up on it");
-            r->finished = true;
-            return 0;
+            return end_of_archive(r);
         }
 
         if (!read_block(r, block, &got)) {
@@ -1151,8 +1168,7 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                              got, TMD_BLOCK_SIZE,
                              (unsigned long long)r->member_start);
             }
-            r->finished = true;
-            return 0;
+            return end_of_archive(r);
         }
 
         /* --- end of archive -------------------------------------------- */
@@ -1172,17 +1188,14 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                              (unsigned long long)(tmd_source_offset(r->src) -
                                                   (uint64_t)TMD_BLOCK_SIZE -
                                                   (uint64_t)second_got));
-                if (second_got == 0) {
-                    r->finished = true;
-                    return 0;
-                }
+                if (second_got == 0)
+                    return end_of_archive(r);
                 memcpy(block, second, TMD_BLOCK_SIZE);
                 /* Fall through and read this block as a header. */
             } else {
                 r->archive.eof_marker = true;
-                r->finished = true;
                 consume_trailer(r);
-                return 0;
+                return end_of_archive(r);
             }
         }
 

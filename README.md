@@ -110,8 +110,9 @@ make test           # unit + end-to-end tests, sanitizers, 80% coverage gate
 
 ```
 Usage: tmd -f FILE [OPTION]...
+       tmd [OPTION]... < FILE      (or: ... | tmd)
 
-  -f, --file=FILE          read this archive; "-" means standard input (required, repeatable)
+  -f, --file=FILE          archive to read; repeatable. Without it, standard input is read
   -o, --output=FILE        write the report to FILE instead of standard output
   -l, --long               one block per member with every field, rather than one line
   -R, --raw-headers        also show the raw 512-byte header fields (implies --long)
@@ -130,7 +131,23 @@ Usage: tmd -f FILE [OPTION]...
   -V, --version            show the version and exit
 ```
 
-Typing `tmd` with no arguments prints that same help and exits 0.
+Typing `tmd` with no arguments **at a terminal** prints that same help and
+exits 0. With standard input redirected or piped it reads that instead, which
+is what makes it work in a pipeline:
+
+```bash
+gzip -dc backup.tar.gz | tmd          # the common case
+zstd -dc backup.tar.zst | tmd -i
+tmd < backup.tar                      # a plain redirect
+ssh host 'cat /backups/nightly.tar' | tmd -s
+```
+
+The distinction is whether stdin is a terminal, which is the same rule `cat`,
+`grep` and `wc` use. Typing the name of the tool to see what it does still
+shows the help; piping something in never prints help at you and exits 0
+having done nothing, which would make a broken pipeline look as though it had
+worked. `-f -` remains valid and means exactly the same thing, for scripts that
+would rather be explicit.
 
 **Exit status.** `0` the archive was read · `1` it could not be read · `2` the
 command line was wrong · `3` `--check` found damage. Three distinct failures
@@ -138,8 +155,8 @@ rather than one, because the difference matters to a script: a mistyped flag is
 the caller's bug, an unreadable archive is the file's problem, and a bad
 checksum is a *finding* — the tool worked perfectly and the archive is damaged.
 
-**`-f` and `-o`.** `-f` is required and may be given more than once to read
-several archives in one run. `-o` redirects the report; warnings about damaged
+**`-f` and `-o`.** `-f` may be given more than once to read several archives in
+one run; with none given, standard input is read. `-o` redirects the report; warnings about damaged
 headers always go to standard error, so `tmd -f x.tar -o report.txt` produces a
 clean report and still tells you that three headers were damaged.
 
@@ -151,6 +168,11 @@ $ tmd -f backup.tar.gz
 tmd: backup.tar.gz: gzip-compressed data, not a plain tar archive
      (try: gzip -dc backup.tar.gz | tmd -f -)
 ```
+
+A piped archive is read exactly as a file is, with one difference worth knowing:
+a pipe cannot seek, so member data is read and discarded rather than skipped
+over. The listing is identical either way — including the archive's own byte
+count, which is measured while reading when there is no file to stat.
 
 ## Output modes
 

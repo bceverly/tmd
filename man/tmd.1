@@ -59,7 +59,7 @@ understand to get every member right.
 .SH OPTIONS
 .TP
 .B \-f, \-\-file=FILE
-read this archive; "\-" means standard input (required, repeatable)
+archive to read; repeatable. Without it, standard input is read
 .TP
 .B \-o, \-\-output=FILE
 write the report to FILE instead of standard output
@@ -141,8 +141,13 @@ write the report to a file
 .B tmd \-f archive.tar \-\-format=json
 machine\-readable output for a script
 .TP
-.B gzip \-dc a.tar.gz | tmd \-f \-
+.B gzip \-dc a.tar.gz | tmd
 read a compressed archive through a pipe
+.\" NOTE: this block is a QUOTED heredoc in scripts/gen-man.sh, so a backslash
+.\" here reaches the page verbatim. Roff escapes are written with ONE backslash
+.\" -- \(co, \-, \e. Doubling them, as the unquoted HEADER block above
+.\" correctly does, makes roff print a literal backslash: the copyright line
+.\" read "Copyright \(co 2026" on an installed page.
 .SH OUTPUT
 .SS The default listing
 One line per member, in the shape
@@ -179,12 +184,12 @@ the umask \- so a stricter umask is honored, and a permissive one cannot leave
 an integrity report that anybody can rewrite.
 .SS Long form
 .B \-l
-prints every field of every member instead \\- format, typeflag, both owner
+prints every field of every member instead \- format, typeflag, both owner
 names and numbers, the size in the archive as well as the extracted size, the
 byte offset of the header, the checksum, any pax attributes that applied, and
 the sparse map when there is one.
 .B \-R
-adds the raw 512\\-byte header fields exactly as they are spelled on disk, which
+adds the raw 512\-byte header fields exactly as they are spelled on disk, which
 is how to tell a mode field of "0000644" from one of "644    ".
 .SS JSON and CSV
 .B \-\-format=json
@@ -199,14 +204,14 @@ read rather than built up in memory, so an archive with a million members costs
 no more than one with ten.
 .PP
 A path in a tar archive is a string of bytes with no declared encoding. In JSON,
-paths that are valid UTF\\-8 are emitted as themselves; anything else is escaped
-byte by byte as \\eu00XX, which round\\-trips through any parser and does not
+paths that are valid UTF\-8 are emitted as themselves; anything else is escaped
+byte by byte as \eu00XX, which round\-trips through any parser and does not
 destroy the value the way replacing it with U+FFFD would.
 .SH WHAT IS CHECKED
 .B \-c
 turns the reporting into a verdict. It exits 3 when a header's checksum does not
-match the bytes of its block, when the two\\-block end\\-of\\-archive marker is
-missing, or when there is non\\-zero data after it. Both the signed and the
+match the bytes of its block, when the two\-block end\-of\-archive marker is
+missing, or when there is non\-zero data after it. Both the signed and the
 unsigned checksum convention are accepted, because tar's own history is
 ambiguous about whether the header bytes were signed and rejecting one of them
 means calling a perfectly good archive corrupt.
@@ -217,7 +222,7 @@ listed.
 .SH LIMITATIONS
 .B tmd
 reads plain, uncompressed tar archives. A compressed archive is recognized and
-named \\- gzip, bzip2, xz, zstd, lz4 and lzip \\- along with the command that
+named \- gzip, bzip2, xz, zstd, lz4 and lzip \- along with the command that
 produces a tar stream from it, which can then be piped in with
 .BR "tmd -f -" .
 .PP
@@ -238,9 +243,9 @@ Archive Format".
 .SH AUTHOR
 Written by Bryan C. Everly.
 .SH COPYRIGHT
-Copyright \\(co 2026 Bryan C. Everly.
+Copyright \(co 2026 Bryan C. Everly.
 .br
-Licensed under the BSD 2\\-Clause License. There is NO WARRANTY, to the extent
+Licensed under the BSD 2\-Clause License. There is NO WARRANTY, to the extent
 permitted by law.
 .SH BUGS
 Report bugs at https://github.com/bceverly/tmd

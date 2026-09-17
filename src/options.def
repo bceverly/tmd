@@ -18,7 +18,7 @@
  */
 
 TMD_OPT('f', "file",          required_argument, "FILE",
-        "read this archive; \"-\" means standard input (required, repeatable)")
+        "archive to read; repeatable. Without it, standard input is read")
 TMD_OPT('o', "output",        required_argument, "FILE",
         "write the report to FILE instead of standard output")
 TMD_OPT('l', "long",          no_argument,       NULL,
