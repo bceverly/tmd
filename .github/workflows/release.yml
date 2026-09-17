@@ -428,23 +428,100 @@ jobs:
           PPA: ${{ vars.LAUNCHPAD_PPA || 'ppa:bceverly/tmd' }}
         run: |
           set -eu
+
+          OWNER="${PPA#ppa:}"; OWNER="${OWNER%%/*}"
+          NAME="${PPA##*/}"
+          API="https://api.launchpad.net/1.0/~$OWNER/+archive/ubuntu/$NAME"
+
+          # Versions the PPA already has.
+          #
+          # Re-uploading one is not harmful -- Launchpad rejects it -- but the
+          # rejection arrives as an email some minutes later, and after a
+          # partial failure a re-run would send one for every series that had
+          # already succeeded. Skipping them keeps a retry quiet. The API is
+          # public, so no credentials are involved.
+          #
+          # Scraped with grep rather than parsed: this needs one string out of
+          # the response, and a JSON parser inline in a YAML block scalar is
+          # how this step got its indentation wrong the first time.
+          PUBLISHED="$(curl -sS --max-time 30 -H 'Accept: application/json' \
+                        "$API?ws.op=getPublishedSources" 2>/dev/null \
+                       | grep -o '"source_package_version": *"[^"]*"' \
+                       | sed 's/.*: *"\(.*\)"/\1/' || true)"
+          echo "already in the PPA:"
+          echo "${PUBLISHED:-  (none)}"
+
           uploaded=0
+          skipped=0
+          failed=""
+
           for changes in artifacts/tmd_*_source.changes; do
             [ -f "$changes" ] || continue
-            echo "Uploading $(basename "$changes") to $PPA"
-            # The .changes file is already signed; dput authenticates by that
-            # signature alone. There is no password or token in this step.
+            version="$(sed -n 's/^Version: //p' "$changes" | head -1)"
+
+            if printf '%s\n' "$PUBLISHED" | grep -qxF "$version"; then
+              echo "· $version is already in $PPA -- skipping"
+              skipped=$((skipped + 1))
+              continue
+            fi
+
+            # Retried with backoff.
             #
-            # Deliberately NOT --unchecked: that skips dput's verification of
-            # the signature, which is the one thing standing between a corrupt
-            # upload and a rejection twenty minutes later with no explanation.
-            dput "$PPA" "$changes"
-            uploaded=$((uploaded + 1))
+            # Launchpad's anonymous FTP endpoint returns a transient
+            # "550 Requested action not taken: internal server error" often
+            # enough to matter, and it did here: the first series uploaded
+            # cleanly and the second failed on its first file, with the same
+            # key, the same signature and the same code path. A server-side
+            # hiccup should not cost a release.
+            #
+            # dput records success in a .upload file beside the .changes and
+            # then refuses to send again, reporting success without doing
+            # anything -- so that file is removed before each attempt, making a
+            # retry a real retry.
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              rm -f "${changes%.changes}.upload" "$changes.upload"
+              echo "Uploading $(basename "$changes") to $PPA (attempt $attempt)"
+              # Deliberately NOT --unchecked: that skips dput's verification of
+              # the signature, which is the one thing standing between a
+              # corrupt upload and a rejection twenty minutes later with no
+              # explanation.
+              if dput "$PPA" "$changes"; then
+                ok=1
+                break
+              fi
+              if [ "$attempt" -lt 5 ]; then
+                delay=$((attempt * 20))
+                echo "  upload failed; retrying in ${delay}s"
+                sleep "$delay"
+              fi
+            done
+
+            if [ "$ok" -eq 1 ]; then
+              uploaded=$((uploaded + 1))
+              # A pause between series. Three uploads of the same source name
+              # back to back is what preceded the failure, and there is no
+              # reason to be in a hurry here.
+              sleep 10
+            else
+              failed="$failed $version"
+            fi
           done
-          if [ "$uploaded" -eq 0 ]; then
+
+          echo
+          echo "uploaded: $uploaded   already present: $skipped   failed:${failed:- none}"
+
+          if [ -n "$failed" ]; then
+            echo "::error::Failed to upload:$failed"
+            echo "::error::Whatever uploaded above IS in the PPA. Re-running this"
+            echo "::error::job skips those and retries only the rest."
+            exit 1
+          fi
+          if [ "$uploaded" -eq 0 ] && [ "$skipped" -eq 0 ]; then
             echo "::error::No source packages were found to upload."
             exit 1
           fi
-          echo "Uploaded $uploaded source package(s). Launchpad builds"
-          echo "asynchronously, so watch it at:"
-          echo "  https://launchpad.net/~${PPA#ppa:}/+packages"
+
+          echo "Launchpad builds asynchronously, so a green job here means"
+          echo "accepted, not published. Watch it at:"
+          echo "  https://launchpad.net/~$OWNER/+archive/ubuntu/$NAME/+packages"
