@@ -305,6 +305,27 @@ jobs:
           # looked up. Deliberately NOT a compiler: the package must not need
           # one to run.
           apt-get install -y -qq --no-install-recommends tar man-db
+
+          # Make the container behave like a real Ubuntu system before
+          # installing anything.
+          #
+          # The official ubuntu images ship /etc/dpkg/dpkg.cfg.d/excludes:
+          #
+          #     path-exclude=/usr/share/man/*
+          #     path-exclude=/usr/share/doc/*
+          #     path-include=/usr/share/doc/*/copyright
+          #
+          # dpkg therefore DELETES the manpage and the changelog as it unpacks,
+          # to keep the image small, while still recording them -- which is why
+          # `dpkg -L tmd` listed a manpage that was not on disk, and why this
+          # job failed twice on a package that was completely correct. The one
+          # file that survived, the copyright, is the one that config
+          # explicitly re-includes.
+          #
+          # Removing it is the whole point of this job: it verifies the
+          # PACKAGE, not Docker's space-saving policy.
+          rm -f /etc/dpkg/dpkg.cfg.d/excludes
+
           dpkg -i /packages/tmd_*_amd64.deb
 
           # Everything the package put on disk, printed unconditionally so that
@@ -315,15 +336,15 @@ jobs:
           # It is installed where the package says it is.
           test -x /usr/bin/tmd
 
-          # A manpage exists and man(1) can resolve it.
-          #
-          # Deliberately NOT `test -f .../tmd.1.gz`. Whether debhelper
-          # compresses a manpage, and with what, is its own business and has
-          # differed between releases -- asserting on the extension made this
-          # job fail on a package that was completely correct. What the package
-          # actually promises is that `man tmd` works, which is what the two
-          # lines below check.
+          # A manpage exists and man(1) can resolve it. Globbed rather than
+          # spelled `tmd.1.gz`: whether debhelper compresses a manpage, and
+          # with what, is its own business and not something the package
+          # promises. What it promises is that `man tmd` works.
           test -n "$(find /usr/share/man/man1 -name 'tmd.1*' -print -quit)"
+
+          # Policy requires both of these in every Debian package.
+          test -f /usr/share/doc/tmd/copyright
+          test -n "$(find /usr/share/doc/tmd -name 'changelog*' -print -quit)"
 
           # It runs, and says what it is.
           tmd --version
