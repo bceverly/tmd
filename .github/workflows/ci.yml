@@ -250,6 +250,24 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             build-essential debhelper devscripts lintian fakeroot
 
+      # The from-source install path, which the README documents and which
+      # nothing else here would notice breaking. Staged into a directory rather
+      # than run for real: DESTDIR needs no privileges, so this checks the
+      # layout and the modes without a sudo in CI.
+      - name: make install, staged
+        run: |
+          make install DESTDIR="$PWD/staged" prefix=/usr
+          test -x staged/usr/bin/tmd
+          test -f staged/usr/share/man/man1/tmd.1
+          # The modes matter: a manpage nobody can read is not installed.
+          test "$(stat -c '%a' staged/usr/bin/tmd)" = 755
+          test "$(stat -c '%a' staged/usr/share/man/man1/tmd.1)" = 644
+          # And the default prefix is /usr/local, so a real install never lands
+          # on top of what dpkg owns.
+          make install DESTDIR="$PWD/staged-default" > /dev/null
+          test -x staged-default/usr/local/bin/tmd
+          rm -rf staged staged-default
+
       - name: make deb
         run: make deb
 

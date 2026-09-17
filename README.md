@@ -1015,7 +1015,9 @@ Run `make` with no arguments for the full list. The ones you will use:
 | `make man` | force the manpage to be regenerated from `--help` |
 | `make docs` | regenerate the manpage **and** the README's Usage block |
 | `make coverage` | measure coverage and refresh the README badge |
-| `make install` | build the installable `.deb` |
+| `make install` | install into `/usr/local` (sudo only if needed); `prefix=` to change it |
+| `make uninstall` | remove what `make install` put there |
+| `make deb` | build the installable `.deb` into the parent directory |
 | `make install-tree` | staged install into `DESTDIR` (what the package build uses) |
 | `make release` | bump the version, tag it and push |
 | `make install-dev` | install every tool the above wants, so nothing skips |
@@ -1105,7 +1107,11 @@ single year or a range, so bumping it does not mean touching every file.
 
 ## Installing
 
-### From the PPA (Ubuntu)
+### From the PPA — recommended on Ubuntu
+
+The packaged build is the one to use on **Ubuntu 22.04, 24.04 and 26.04 LTS**.
+It is signed, it upgrades with everything else, `apt` pulls in the decompressors
+tmd needs, and removing it leaves nothing behind:
 
 ```bash
 sudo add-apt-repository ppa:bceverly/tmd
@@ -1113,25 +1119,75 @@ sudo apt update
 sudo apt install tmd
 ```
 
+That is all. `tmd --version` should answer, and `man tmd` should open the page.
+
+To remove it later:
+
+```bash
+sudo apt remove tmd
+sudo add-apt-repository --remove ppa:bceverly/tmd
+```
+
+### From source
+
+For a distribution the PPA does not cover, or to run a build of your own:
+
+```bash
+git clone https://github.com/bceverly/tmd.git
+cd tmd
+make build
+sudo make install
+```
+
+`make install` puts the binary in `/usr/local/bin/tmd` and the manpage in
+`/usr/local/share/man/man1/tmd.1`, then refreshes the man database so `man tmd`
+works immediately.
+
+**`/usr/local`, not `/usr`, and on purpose.** `/usr` belongs to the
+distribution's package manager: a file written there by hand is one `dpkg` does
+not know about, and installing the PPA package later would be fighting it.
+`/usr/local` is the place the Filesystem Hierarchy Standard sets aside for
+software the administrator installed themselves, and it comes before `/usr/bin`
+on the default `PATH`.
+
+It asks for `sudo` only when it actually needs it — and asks once, up front,
+rather than in the middle of the work:
+
+```bash
+make install prefix=$HOME/.local     # no sudo at all
+```
+
+If something else on your `PATH` already provides `tmd` — the PPA package, say —
+the install says so rather than leaving you to wonder why the version did not
+change.
+
+To take it back out:
+
+```bash
+sudo make uninstall                  # or: make uninstall prefix=$HOME/.local
+```
+
+**Build requirements** are a C11 compiler and `make`, and nothing else. The
+decompressors are optional and only needed for compressed archives — see
+[What it links, and what it runs](#what-it-links-and-what-it-runs).
+
 ### Build the package yourself
 
-```bash
-make install        # or: make deb — builds ../tmd_<version>~<series>1_<arch>.deb
-sudo dpkg -i ../tmd_*.deb
-```
-
-`make install` builds a `.deb` rather than copying files into `/usr`, which is
-what this project's owner asked for. The staged install a package build needs is
-`make install-tree DESTDIR=... prefix=/usr`, and it is deliberately not called
-`install`: a target that quietly writes into `/usr` when somebody expected a
-package is the wrong surprise to hand anybody.
-
-### Without a package
+To produce the same `.deb` the PPA ships, without waiting for a release:
 
 ```bash
-make build
-sudo make install-tree prefix=/usr/local
+make deb                             # builds ../tmd_<version>~<series>1_<arch>.deb
+sudo apt install ../tmd_*.deb        # apt, not dpkg -i: it resolves the dependencies
 ```
+
+Use `apt install`, not `dpkg -i`. dpkg does not fetch dependencies — it unpacks,
+finds `xz-utils` missing on a minimal system, and leaves the package
+unconfigured.
+
+The staged install a package build needs is `make install-tree DESTDIR=...
+prefix=/usr`, which is what `debian/rules` calls. It is deliberately not the
+same target as `make install`: one is assembling a directory for a package, the
+other is putting files on a live system, and they want different defaults.
 
 ## Releasing
 

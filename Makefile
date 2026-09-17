@@ -113,7 +113,13 @@ ALL_CPPFLAGS = $(TMD_CPPFLAGS) $(CPPFLAGS) -Itests
 ALL_LDFLAGS  = $(TMD_LDHARDEN) $(LDFLAGS)
 
 # Installation paths, overridable the way every package build expects.
-prefix      ?= /usr
+#
+# /usr/local, not /usr: this default is what `make install` uses, and /usr
+# belongs to the distribution's package manager. A file written there by hand is
+# one dpkg does not know about, and the PPA package would then be fighting it.
+# debian/rules passes prefix=/usr explicitly, so the package still lands where a
+# package should.
+prefix      ?= /usr/local
 exec_prefix ?= $(prefix)
 bindir      ?= $(exec_prefix)/bin
 datarootdir ?= $(prefix)/share
@@ -267,10 +273,17 @@ man-check: build ## Fail if the committed manpage or README block is out of date
 install-hooks: ## Install the git pre-commit (lint) and pre-push (test) hooks
 	@scripts/install-hooks.sh
 
-##@ Packaging
+##@ Installing
 
 .PHONY: install
-install: deb ## Build the installable .deb (see install-tree for a staged install)
+install: build ## Install into $(prefix) (default /usr/local), asking for sudo if needed
+	@scripts/install.sh
+
+.PHONY: uninstall
+uninstall: ## Remove what `make install` installed
+	@scripts/install.sh --uninstall
+
+##@ Packaging
 
 .PHONY: deb
 deb: build ## Build the binary .deb into the parent directory
@@ -284,10 +297,15 @@ deb-source: build ## Build the signed source package for a Launchpad upload
 deb-sbuild: build ## Build in a clean chroot, the way a Launchpad builder does
 	@scripts/build-deb.sh --sbuild
 
-# The staged install debian/rules calls. Not named `install`, because the user
-# of this Makefile asked for `make install` to produce a package — and a target
-# that quietly writes into /usr when somebody expected a .deb is the wrong
-# surprise to hand anybody.
+# The staged install debian/rules calls.
+#
+# Separate from `make install`, because the two jobs want different answers.
+# This one assembles a directory that is about to become a package: it writes
+# wherever DESTDIR says, uses prefix=/usr as debian/rules passes it, never asks
+# for privileges, and never touches the man database -- indexing a staging tree
+# would describe a filesystem that does not exist yet. `make install` puts files
+# on a live system, defaults to /usr/local so it cannot collide with what dpkg
+# owns, and escalates only if it has to.
 .PHONY: install-tree
 install-tree: build ## Install into DESTDIR (used by the package build)
 	@$(INSTALL) -d $(DESTDIR)$(bindir)
@@ -295,10 +313,6 @@ install-tree: build ## Install into DESTDIR (used by the package build)
 	@$(INSTALL) -d $(DESTDIR)$(mandir)/man1
 	@$(INSTALL) -m 0644 $(MAN_PAGE) $(DESTDIR)$(mandir)/man1/$(PROG).1
 	@printf '  \033[92m✓\033[0m installed into %s\n' "$(DESTDIR)$(prefix)"
-
-.PHONY: uninstall
-uninstall: ## Remove what install-tree installed
-	@rm -f $(DESTDIR)$(bindir)/$(PROG) $(DESTDIR)$(mandir)/man1/$(PROG).1
 
 .PHONY: deb-clean
 deb-clean: ## Remove packaging output
