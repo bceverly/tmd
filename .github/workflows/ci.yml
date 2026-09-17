@@ -224,9 +224,19 @@ jobs:
           test "$(tmd -f /tmp/check.tar --format=json | head -c 1)" = "{"
           sudo dpkg -r tmd
 
+      # dpkg-buildpackage writes one level above the checkout, and
+      # upload-artifact refuses any path containing "..". Staged inside the
+      # workspace first -- the release workflow already does this; only CI had
+      # the bare ../ path, and nothing local exercises an artifact upload, so
+      # it could not fail anywhere but here.
+      - name: Stage the package for upload
+        run: |
+          mkdir -p artifacts
+          cp ../tmd_*.deb artifacts/
+
       - uses: actions/upload-artifact@v7
         with:
           name: package
-          path: ../tmd_*.deb
+          path: artifacts/
           retention-days: 14
           if-no-files-found: error

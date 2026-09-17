@@ -141,8 +141,17 @@ if command -v clang-tidy > /dev/null 2>&1; then
   #   bugprone-easily-swappable-parameters
   #       Flags (const char *a, const char *b) signatures. True of most string
   #       functions ever written.
+  #
+  #   clang-analyzer-valist.Uninitialized
+  #       A false positive in the analyzer shipped with clang 18 (Ubuntu
+  #       24.04), which does not model va_copy: it reports the vsnprintf in
+  #       tmd_xvasprintf as taking an uninitialized va_list when the argument
+  #       is the freshly va_copy'd one, and reports bad_usage's vfprintf the
+  #       same way with va_start three lines above it. Both are correct C and
+  #       a newer clang says nothing. The sibling checks valist.Unterminated
+  #       and valist.CopyToSelf stay on — those catch real bugs.
   if clang-tidy --quiet \
-       '-checks=-*,bugprone-*,cert-*,clang-analyzer-*,misc-*,performance-*,-misc-include-cleaner,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-multi-level-implicit-pointer-conversion' \
+       '-checks=-*,bugprone-*,cert-*,clang-analyzer-*,misc-*,performance-*,-misc-include-cleaner,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-multi-level-implicit-pointer-conversion,-clang-analyzer-valist.Uninitialized' \
        --warnings-as-errors='*' \
        src/*.c -- -std=c11 "${CPPFLAGS_ALL[@]}" > "$WORK/clang-tidy.log" 2>&1; then
     ok "no findings"

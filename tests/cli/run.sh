@@ -273,6 +273,15 @@ check "-o leaves standard error empty for a clean archive" "$(cat stderr.txt)" "
 check_status "-o to an unwritable path fails" "$?" 1
 
 # Reading a pipe.
+#
+# The cat is deliberate and must not become a `< gnu.tar` redirect, however
+# much the linter would prefer one. A redirect hands tmd a REGULAR FILE on
+# stdin, which is seekable, so it would exercise the same fseeko path the -f
+# case already covers. Piping gives it a pipe, which cannot seek — and the
+# read-and-discard fallback in tmd_source_skip is the whole point of this check.
+# (Any comment line starting with the linter's own name is read as a directive,
+# hence the circumlocution above.)
+# shellcheck disable=SC2002
 check "reading from standard input matches reading the file" \
       "$(cat gnu.tar | "$TMD" -f - 2>/dev/null)" "$("$TMD" -f gnu.tar 2>/dev/null)"
 

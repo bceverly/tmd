@@ -57,14 +57,58 @@ section "binary hardening"
 if [ ! -x bin/tmd ]; then
   skip "bin/tmd is not built — run 'make build' first"
 elif command -v hardening-check > /dev/null 2>&1; then
-  # --nobranchprotection: that one is an AArch64 pointer-authentication
-  # feature. hardening-check reports it as missing on x86 regardless, where
-  # the equivalent protection is CET — which it checks separately, and which
-  # this build does enable.
-  if hardening-check --nobranchprotection bin/tmd > "$REPORTS/hardening.txt" 2>&1; then
-    ok "PIE, stack protector, fortify, RELRO, BIND_NOW and CET are all present"
+  #
+  # The report is read rather than the exit status trusted, because which
+  # features hardening-check knows about — and which command-line options it
+  # offers to skip them — varies between devscripts releases. Asking it to
+  # skip a check it has never heard of is a hard error: passing
+  # --nobranchprotection is fine on 26.04 and fails outright on 24.04 with
+  # "Unknown option", which is how a scan that was green on a laptop failed on
+  # a runner. Parsing the lines works on every version.
+  #
+  # Branch Protection is deliberately not required. It is an AArch64
+  # pointer-authentication feature; on x86 the equivalent is CET, which is
+  # checked on its own line and which this build does enable.
+  hardening-check bin/tmd > "$REPORTS/hardening.txt" 2>&1 || true
+
+  #
+  # "unknown" is not "missing", and treating it as such is stricter than the
+  # tool itself (which exits 0 on it). It means hardening-check found no
+  # evidence either way -- for stack-clash protection that is the normal
+  # result on a program whose stack frames are all small, since the compiler
+  # only emits a probe where one is actually needed. The flag is passed; there
+  # was simply nothing for it to do.
+  missing=()
+  unknown=()
+  present=0
+  while IFS= read -r line; do
+    feature="${line%%:*}"
+    feature="${feature#"${feature%%[![:space:]]*}"}"   # trim leading spaces
+    verdict="${line#*: }"
+    case "$feature" in
+      # AArch64 pointer authentication. On x86 the equivalent is CET, which
+      # has a line of its own and which this build enables.
+      "Branch Protection") continue ;;
+      "") continue ;;
+    esac
+    case "$verdict" in
+      yes*)     present=$((present + 1)) ;;
+      unknown*) unknown+=("$feature") ;;
+      *)        missing+=("$feature") ;;
+    esac
+  done < <(grep ':' "$REPORTS/hardening.txt" | grep -v '^[^ ]')
+
+  if [ ${#missing[@]} -eq 0 ] && [ "$present" -gt 0 ]; then
+    ok "$present hardening features present (PIE, stack protector, fortify, RELRO, BIND_NOW, CET)"
+    if [ ${#unknown[@]} -gt 0 ]; then
+      note "not determinable from the binary: ${unknown[*]}"
+      note "(enabled at compile time; the compiler emitted no instruction needing it)"
+    fi
+  elif [ "$present" -eq 0 ]; then
+    bad "could not read hardening-check's report"
+    sed 's/^/      /' "$REPORTS/hardening.txt"
   else
-    bad "the binary is missing a hardening feature"
+    bad "the binary is missing: ${missing[*]}"
     sed 's/^/      /' "$REPORTS/hardening.txt"
   fi
 elif command -v readelf > /dev/null 2>&1; then
@@ -205,7 +249,15 @@ fi
 section "fuzzing — inputs nobody wrote"
 FUZZ_SECONDS="${SECURITY_FUZZ_SECONDS:-60}"
 if FUZZ_SECONDS="$FUZZ_SECONDS" scripts/fuzz.sh > "$REPORTS/fuzz.log" 2>&1; then
-  ok "$(grep -oE '[0-9]+ cases' "$REPORTS/fuzz.log" | tail -1) in ${FUZZ_SECONDS}s, no crashes"
+  # Either engine, whichever ran: the built-in loop counts "N cases", libFuzzer
+  # reports "Done N runs". Without both patterns the line came out as
+  # "✓  in 120s, no crashes" on a runner where libFuzzer was the one available.
+  FUZZ_COUNT="$(grep -oE '[0-9]+ cases' "$REPORTS/fuzz.log" | tail -1)"
+  if [ -z "$FUZZ_COUNT" ]; then
+    FUZZ_COUNT="$(grep -oE 'Done [0-9]+ runs' "$REPORTS/fuzz.log" | tail -1 \
+                  | sed 's/Done //; s/ runs/ cases/')"
+  fi
+  ok "${FUZZ_COUNT:-the fuzzer ran} in ${FUZZ_SECONDS}s, no crashes"
 else
   bad "the fuzzer found a crash"
   note "see $REPORTS/fuzz.log and .fuzz/crash.tar"

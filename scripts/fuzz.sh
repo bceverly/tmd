@@ -98,6 +98,10 @@ if command -v clang > /dev/null 2>&1 && [ "${FUZZ_ENGINE:-auto}" != "builtin" ];
     fi
   else
     note "clang is installed but the libFuzzer build failed; using the built-in loop"
+    if grep -q 'libclang_rt' "$WORK/build-libfuzzer.log" 2>/dev/null; then
+      note "clang's runtime is missing: sudo apt install libclang-rt-dev"
+      note "(or: make install-dev)"
+    fi
     note "see $WORK/build-libfuzzer.log"
   fi
 fi

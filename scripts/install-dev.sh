@@ -69,6 +69,11 @@ PACKAGES=(
   lintian
   # --- the fuzzer's better engine ------------------------------------------
   clang                    # libFuzzer; the built-in mutator works without it
+  # clang alone is not enough: -fsanitize=fuzzer links against compiler-rt,
+  # and without this the build fails with "cannot find libclang_rt.fuzzer.a"
+  # and scripts/fuzz.sh quietly falls back to the weaker built-in mutator.
+  # Quietly is the problem -- it looks like a passing fuzz run either way.
+  libclang-rt-dev
   # --- what this script itself needs ---------------------------------------
   curl                     # fetching the pinned gitleaks release
   pipx                     # semgrep is Python, and apt has no current package

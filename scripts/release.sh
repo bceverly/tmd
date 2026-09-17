@@ -153,8 +153,9 @@ ok "./bin/tmd reports $BUILT"
 bold "Publishing"
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-[ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ] \
-  || die "Not on a branch (detached HEAD?); cannot push."
+if [ -z "$BRANCH" ] || [ "$BRANCH" = "HEAD" ]; then
+  die "Not on a branch (detached HEAD?); cannot push."
+fi
 
 git remote get-url origin > /dev/null 2>&1 \
   || die "No 'origin' remote configured; nothing to push to."

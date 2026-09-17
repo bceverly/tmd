@@ -75,8 +75,9 @@ MAINTAINER_LINE="$(sed -n 's/^Maintainer: //p' debian/control | head -1)"
 CONTROL_NAME="${MAINTAINER_LINE%% <*}"
 CONTROL_EMAIL="$(printf '%s' "$MAINTAINER_LINE" | sed -n 's/.*<\(.*\)>.*/\1/p')"
 
-[ -n "$CONTROL_NAME" ] && [ -n "$CONTROL_EMAIL" ] \
-  || die "Could not read the Maintainer line from debian/control."
+if [ -z "$CONTROL_NAME" ] || [ -z "$CONTROL_EMAIL" ]; then
+  die "Could not read the Maintainer line from debian/control."
+fi
 
 # Say so when the environment disagrees, rather than silently winning: somebody
 # who exported DEBEMAIL on purpose should find out that it was not used here.
