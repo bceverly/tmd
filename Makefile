@@ -154,9 +154,21 @@ $(BIN_DIR)/$(PROG): $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SRC)) | $(BIN_DIR)
 # run `make build` — which does nothing, because from make's point of view
 # everything is up to date.
 #
-# The recipe runs every time and rewrites the file only when the content
-# differs, so the mtime moves exactly when a rebuild is genuinely needed.
-$(OBJ_DIR)/version.stamp: | $(OBJ_DIR)
+# The FORCE prerequisite is what makes the recipe run at all. A target whose
+# only prerequisite is order-only is considered up to date by make as soon as
+# the file exists — so without it the recipe never ran, the stamp kept its first
+# value forever, and nothing was ever rebuilt for a version change, which is
+# precisely the failure it was added to prevent. `make release` is what caught
+# it: it wrote VERSION, rebuilt, and found the binary still reporting the old
+# number.
+#
+# With FORCE the recipe runs every time and rewrites the file only when the
+# content differs, so the mtime moves exactly when a rebuild is needed and not
+# otherwise.
+.PHONY: FORCE
+FORCE:
+
+$(OBJ_DIR)/version.stamp: FORCE | $(OBJ_DIR)
 	@printf '%s' '$(VERSION)' | cmp -s - $@ 2>/dev/null \
 	  || printf '%s' '$(VERSION)' > $@
 

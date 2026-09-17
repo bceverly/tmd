@@ -60,6 +60,7 @@ crw-rw----  root/root                1,3  2026-09-16 14:11  dev/null
 - [GitHub configuration](#github-configuration)
 - [Project layout](#project-layout)
 - [Design notes](#design-notes)
+- [Roadmap](ROADMAP.md)
 
 ---
 
@@ -794,6 +795,12 @@ reading one file; there is nothing useful to do about a failed 40-byte
 allocation except die, and threading a NULL check through every parser would add
 far more places to get the error handling wrong than it removes. Everything that
 allocates a *caller-controlled* amount is bounded before it gets there.
+
+## Roadmap
+
+Ideas for future versions live in [ROADMAP.md](ROADMAP.md) — including an
+exhaustive JSON mode that describes the bytes of a header rather than
+summarizing them, archive diffing, and tar-bomb detection.
 
 ---
 
