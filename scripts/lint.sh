@@ -185,7 +185,14 @@ if command -v clang-tidy > /dev/null 2>&1; then
        '-checks=-*,bugprone-*,cert-*,clang-analyzer-*,misc-*,performance-*,readability-braces-around-statements,-misc-include-cleaner,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-multi-level-implicit-pointer-conversion,-clang-analyzer-valist.Uninitialized' \
        --warnings-as-errors='*' \
        src/*.c -- -std=c11 "${CPPFLAGS_ALL[@]}" > "$WORK/clang-tidy.log" 2>&1; then
-    ok "no findings"
+    # Name the version, as the compiler section above does.
+    #
+    # clang-tidy's checks change between releases: 19 refined
+    # bugprone-sizeof-expression and fixed the valist false positive that 18
+    # reports. So "clean locally, failed in CI" is usually a version gap, and
+    # having both logs state their version turns that from a puzzle into a
+    # one-line comparison.
+    ok "no findings ($(clang-tidy --version | sed -n 's/.*LLVM version /clang-tidy /p' | head -1))"
   else
     bad "clang-tidy found something"
     grep -E "warning:|error:" "$WORK/clang-tidy.log" | head -30 | sed 's/^/      /'

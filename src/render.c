@@ -1607,6 +1607,17 @@ static void hold_entry(struct tmd_render *rd, const struct tmd_entry *e)
 {
     if (rd->nheld == rd->held_cap) {
         rd->held_cap = rd->held_cap ? rd->held_cap * 2 : 128;
+        /*
+         * `held` is an array OF POINTERS, so the element size is the size of a
+         * pointer and sizeof(*rd->held) is exactly right.
+         *
+         * Suppressed rather than rewritten because there is no other way to
+         * spell it: the check objects to taking sizeof of any pointer-to-struct
+         * type, which is what an array of pointers needs by definition. It fires
+         * only on clang-tidy 18 (Ubuntu 24.04, which CI runs); 19 and later
+         * refined the check and say nothing, so this is invisible locally.
+         */
+        /* NOLINTNEXTLINE(bugprone-sizeof-expression) */
         rd->held = tmd_xrealloc(rd->held, rd->held_cap * sizeof(*rd->held));
     }
     rd->held[rd->nheld++] = tmd_entry_clone(e);
@@ -1735,6 +1746,8 @@ static void flush_held(struct tmd_render *rd)
 
     if (rd->nheld > 0) {
         compare_options = rd->opt;
+        /* The element is a pointer; see hold_entry above. */
+        /* NOLINTNEXTLINE(bugprone-sizeof-expression) */
         qsort(rd->held, rd->nheld, sizeof(*rd->held), compare_held);
         compare_options = NULL;
     }
