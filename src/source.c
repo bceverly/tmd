@@ -38,8 +38,9 @@ struct tmd_source *tmd_source_open(const char *path, char **err)
     } else {
         file = fopen(path, "rb");
         if (!file) {
-            if (err)
+            if (err) {
                 *err = tmd_xasprintf("%s: %s", path, strerror(errno));
+            }
             return NULL;
         }
     }
@@ -50,8 +51,9 @@ struct tmd_source *tmd_source_open(const char *path, char **err)
          * or something else. stat, not fseek/ftell: it costs one syscall and
          * works the same on a file opened for reading on any platform. */
         struct stat st;
-        if (fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode))
+        if (fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode)) {
             size = (uint64_t)st.st_size;
+        }
     }
 
     s = tmd_xcalloc(1, sizeof(*s));
@@ -76,10 +78,12 @@ struct tmd_source *tmd_source_open_memory(const void *data, size_t len,
 
 void tmd_source_close(struct tmd_source *s)
 {
-    if (!s)
+    if (!s) {
         return;
-    if (s->file && s->owns_file)
+    }
+    if (s->file && s->owns_file) {
         (void)fclose(s->file);
+    }
     free(s->name);
     free(s);
 }
@@ -88,14 +92,16 @@ size_t tmd_source_read(struct tmd_source *s, void *buf, size_t n)
 {
     size_t got;
 
-    if (n == 0)
+    if (n == 0) {
         return 0;
+    }
 
     if (s->file) {
         got = fread(buf, 1, n, s->file);
         if (got < n) {
-            if (ferror(s->file))
+            if (ferror(s->file)) {
                 s->error = true;
+            }
             s->eof = true;
         }
     } else {
@@ -125,8 +131,9 @@ bool tmd_source_skip(struct tmd_source *s, uint64_t n)
     char   scratch[8192];
     bool   complete = true;
 
-    if (n == 0)
+    if (n == 0) {
         return true;
+    }
 
     if (s->file) {
         /*
@@ -161,8 +168,9 @@ bool tmd_source_skip(struct tmd_source *s, uint64_t n)
     while (n > 0) {
         size_t want = n < sizeof(scratch) ? (size_t)n : sizeof(scratch);
         size_t got = tmd_source_read(s, scratch, want);
-        if (got == 0)
+        if (got == 0) {
             return false;
+        }
         n -= got;
     }
     return complete;

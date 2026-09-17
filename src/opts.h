@@ -21,6 +21,16 @@
 #define TMD_EXIT_ERROR   1
 #define TMD_EXIT_USAGE   2
 #define TMD_EXIT_CHECK   3
+/*
+ * -m was given and nothing matched.
+ *
+ * Its own status rather than 1 or 3: "I read the archive and there is no such
+ * member" is a different answer from "I could not read the archive" and from
+ * "the archive is damaged", and a script that does
+ * `tmd -f a.tar -m secrets.env || echo absent` has to be able to tell them
+ * apart. Additive -- nothing that existed before can return it.
+ */
+#define TMD_EXIT_NOMATCH 4
 
 /* What the command line asked for. `files` points into argv and is not owned. */
 struct tmd_cli {

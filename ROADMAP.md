@@ -5,79 +5,36 @@ SPDX-License-Identifier: BSD-2-Clause
 
 # Roadmap
 
-Ideas for future versions. Nothing here is committed to a release; an item
-leaves this file when it ships or when it is decided against — and one decided
-against is worth recording under [Considered and declined](#considered-and-declined)
-rather than silently dropping, so it is not proposed again a year later.
+Ideas for future versions. Nothing here is committed to a release.
 
----
+An item does not leave this file when it is resolved; it moves. Shipped work
+goes to [Shipped](#shipped) with the version it went out in, and an idea decided
+against goes to [Considered and declined](#considered-and-declined) with the
+reason. A file that lists only what is left cannot answer "was this ever
+considered?" or "when did that land?", which are the two questions actually
+asked of a roadmap a year later.
 
-## Find a member by name: `-m` / `--match PATTERN`
+## Status
 
-**Wanted:** name a file and have tmd report every member that matches, with its
-full internal path and its metadata — including when the same name appears in
-the archive more than once.
-
-**The switch.** `-s` would have been the obvious short form for `--search`, and
-it is taken: `-s` is `--summary` and `-S` is `--with-summary`, both shipped and
-documented, so neither can move. `-m` is free, is not confusable with `-n`
-(`--numeric-owner`), and "match" says the true thing — this is a *filter* over
-the listing, not a separate mode. `--name` and `--path` are deliberately left
-unused in case the matching ever needs to be narrowed explicitly.
-
-**What it matches.** fnmatch(3) globs, following find(1)'s convention, which is
-the one everybody already knows:
-
-| pattern | matches |
+| Item | Status |
 |---|---|
-| `nginx.conf` | any member whose **basename** is exactly that, at any depth |
-| `*.conf` | any member whose basename ends in `.conf` |
-| `etc/nginx/*` | contains a `/`, so it matches against the **full stored path** |
-| `*/logs/*` | likewise |
+| [Find a member by name: `-m` / `--match`](#find-a-member-by-name--m----match-pattern-v1300) | **Shipped** in v1.3.0.0 |
+| [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
+| [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
+| [Promote `LIBARCHIVE.creationtime` to a `created` line](#other-ideas) | Not started |
+| [Reproduce the extension blocks, not just the member header](#other-ideas) | Not started — follow-up to the JSON work |
+| [`--verify` against a manifest](#other-ideas) | Not started |
+| [Read compressed archives directly](#other-ideas) | Not started |
+| [`--diff` between two archives](#other-ideas) | Not started |
+| [Report the *order* members appear in](#other-ideas) | Not started |
+| [Detect tar bombs](#other-ideas) | Not started |
+| [More architectures in CI](#other-ideas) | Not started |
+| [A `--stat` mode](#other-ideas) | Not started |
 
-Case-sensitive, because a tar path is a string of bytes and two members
-differing only in case are two different members. Repeatable — `-m a.conf -m
-b.conf` reports members matching either.
+Nine open, three shipped, none declined.
 
-**Every occurrence, not the first.** This is the part worth building carefully,
-and the reason the feature belongs in *this* tool rather than in `tar -t | grep`.
-A tar archive can legitimately contain the same path twice: `tar -r` appends,
-an incremental backup re-adds a changed file, and a concatenated archive can
-carry two whole copies. Extraction silently keeps the last one. tmd should show
-all of them, with the byte offset of each, because "which copy wins and what was
-the other one" is a question nothing else answers:
-
-```
-$ tmd -f backup.tar -m nginx.conf
--rw-r--r--  root/root    2481  2026-03-01 09:14  etc/nginx/nginx.conf   @1536
--rw-r--r--  root/root    2604  2026-09-15 11:02  etc/nginx/nginx.conf   @884736  (extracted; supersedes @1536)
-```
-
-**It is a filter, so it composes.** `-m` should narrow the member set and change
-nothing else: the default listing prints matching lines, `-l` prints a full
-block per match, `--format=json` emits only matching entries, `--format=csv`
-only matching rows. It must keep working on a pipe, which it does for free —
-matching needs the path, which the reader already has, and nothing has to be
-buffered.
-
-**Open questions for whoever picks this up**
-
-- *Does the summary describe the archive or the matches?* `-S` with `-m` is
-  ambiguous. The archive's format, blocking and integrity are properties of the
-  whole file and should not change because a filter was applied; the counts
-  arguably should. Suggest: the summary keeps describing the whole archive, and
-  a matched run adds one line — `matched 2 of 562 members`.
-- *Exit status when nothing matches.* Genuinely useful for scripting
-  (`tmd -f a.tar -m secrets.env || echo absent`), but 1 already means "could not
-  read the archive" and 3 means "--check found damage", and conflating "no match"
-  with either would be wrong. A new **4** for "no member matched" is the honest
-  answer, and it is additive — nothing that exists today can return it.
-- *Should `--info` respect it?* Probably not: `-i` describes the archive, and an
-  archive's generation does not depend on a filter. Likely a usage error to
-  combine them, or `-m` is simply ignored there.
-- *Whether to grow a regex option later.* fnmatch covers the asked-for case and
-  costs nothing; POSIX `regcomp` is in libc too, so `--regex` could be added
-  without a dependency if globs ever prove too blunt. Not now.
+`-m` and `--sort` go out in v1.3.0.0. The minor moves because the command line
+grew — the same rule v1.2.0.0 followed when `-t` was added.
 
 ---
 
@@ -149,8 +106,6 @@ Unordered, and none of them thought through as far as the item above.
   report them as a class. `tmd` never extracts, so this is pure reporting — but
   it is the question somebody pointing this tool at an untrusted archive most
   wants answered.
-- **`--sort` for the listing.** By size, by mtime, by path. Requires buffering,
-  so it should be opt-in and should say so when the archive is large.
 - **More architectures in CI.** The code is endian-clean by construction (every
   field is parsed byte by byte) but nothing proves it. A `qemu`-based
   big-endian leg would.
@@ -191,6 +146,116 @@ Unordered, and none of them thought through as far as the item above.
   Related: report whether any mtime is in the **future**, or before the first
   tar existed. Both are signs of a clock problem or a crafted header, and both
   are invisible in a listing that shows one member per line.
+
+---
+
+## Shipped
+
+### Find a member by name: `-m` / `--match PATTERN` (v1.3.0.0)
+
+**What shipped**, as designed: fnmatch(3) globs following find(1)'s rule (a
+pattern with a `/` matches the whole stored path, one without it the basename),
+case-sensitive, repeatable, and reporting **every** occurrence rather than the
+first — which is the reason the feature belongs here rather than in
+`tar -t | grep`.
+
+Each matched line carries `@offset`. That is the one deliberate exception to
+"`-m` narrows the member set and changes nothing else": two lines for the same
+path differing only in size and date tell you there are two copies, and the
+offset tells you which is which. `-l` and the machine formats already had it.
+
+The open questions, and how each was answered:
+
+- *Does the summary describe the archive or the matches?* The archive, as
+  suggested. Format, blocking and integrity are properties of the file and do
+  not change because a pattern was supplied. One line is added:
+  `matched 2 of 562 members`, in both the summary and the `-i` report.
+- *Exit status when nothing matched?* **4**, as suggested, and only when nothing
+  worse happened — an unreadable archive still exits 1, because reporting "no
+  match" for a file that could not be read would be a lie.
+- *Should `--info` respect it?* The roadmap floated a usage error. It is not one.
+  `-i` describes the whole archive and still does; `-m` adds the matched line
+  and nothing else. Erroring would have been a rule with nothing behind it,
+  given `-s` has exactly the same shape and is fine.
+- *A regex option later?* Still not now.
+
+### `--sort` for the listing (v1.3.0.0)
+
+**What shipped:** `--sort=KEY` over `path`, `size`, `mtime` or `offset`, with
+`--reverse`. `name` and `time` are accepted as aliases for the first two,
+because they are what a person types first.
+
+The roadmap said it "requires buffering, so it should be opt-in and should say
+so when the archive is large". All three are true of what shipped: it is opt-in,
+it holds a clone of every entry that will be printed (the reader recycles one
+entry, so nothing can be kept without copying it), and past 100,000 held members
+it says so on stderr — a warning rather than a cap, because truncating a listing
+because it got big would be worse than the memory.
+
+Two decisions the sketch did not cover:
+
+- **Ties keep the archive's own order.** Every comparison falls back to the byte
+  offset, so the order is total and the output reproducible. Without it two
+  members of the same size come out in whatever order qsort happened to leave
+  them, and a listing cannot be diffed against itself.
+- **`--reverse` inverts the key, not the fallback.** Under `--sort=size
+  --reverse` the largest comes first, but two equal sizes stay in archive order.
+  The exception is `--sort=offset`, where the offset *is* the key and so is
+  reversed.
+
+### Exhaustive JSON output, and a `-t` spelling for it (v1.2.0.0)
+
+**What was wanted:** `-t` / `--output-type` taking `TXT` or `JSON`, and a JSON
+mode that emits everything that can be determined about a member rather than a
+tidier version of the listing.
+
+**What shipped.** `-t` / `--output-type` accepts `TXT`, `JSON` and `CSV` in
+either case; `--format` continues to work under its old name, because it is in
+the manpage of a released version. Both are documented, with `-t` as the primary
+spelling.
+
+The JSON carries `"schema": 2` as its first field and adds, per member:
+
+| Field | What it answers |
+|---|---|
+| `mode_bits` | setuid, setgid, sticky and each rwx triple, broken out |
+| `blocks` | the exact block range the member occupies, and its padding |
+| `checksum.computed_signed` / `.matched` | both historic conventions, and which one the archive agreed with |
+| `mtime_source`, `atime_source`, `ctime_source` | header, GNU tail, or the named pax key that overrode it |
+| `path_source`, `linkpath_source` | header, `prefix`, GNU `L`, or pax |
+| `path_encoding`, `linkpath_encoding` | valid UTF-8, and the offset of the first byte that is not |
+| `xattrs` | `SCHILY.xattr.*` / `LIBARCHIVE.xattr.*` decoded from base64, beside the verbatim record |
+| `warnings[].code` | a stable name such as `checksum-mismatch`, instead of prose a consumer would have to pattern-match |
+| `raw.block_base64`, `raw.block_offset` | under `-R`, the member's own 512-byte header, byte for byte |
+
+**What the design notes asked for, and what happened to each.**
+
+- *Stay streaming.* It does. Each member is still built in its own buffer and
+  written as it is read; nothing accumulates across members.
+- *Base64 for the raw block, `\u00XX` for strings.* Both as specified. The
+  string rule was already right and was left alone; `path_encoding` now reports
+  which of the two happened so a consumer never has to guess.
+- *A `"schema"` marker.* Added, at 2. Schema 1 was the output through v1.1.0.x.
+  The number moved because one existing shape changed — `warnings` went from an
+  array of strings to an array of `{code, text}`. New keys will keep arriving
+  within a schema without moving it.
+- *Pull fields into `struct tmd_entry` so both renderers can use them.* Partly.
+  `chksum_signed` and `path_source` were already there and simply unemitted;
+  `tmd_time` gained a `source`, `tmd_raw` gained the block, and the warning
+  became a `{code, text}` pair. `render.c` did not shrink — it grew by about a
+  hundred lines, all of it new output rather than duplicated formatting.
+
+**What did not ship.** The base64 block covers the member's own header only. A
+member with a GNU `L` name or a pax `x` header occupies two or three more blocks,
+and those are still described by their effects rather than reproduced — see
+*Reproduce the extension blocks* under [Other ideas](#other-ideas).
+
+**Worth knowing.** The round-trip is enforced end to end: a test decodes every
+`raw.block_base64` and compares it against the archive file at
+`raw.block_offset`. That test is what caught the one real design mistake in the
+work — `blocks.header_offset` is the member's *first* block, which for a
+long-name member is the `L` header and not the block `raw` describes, so
+`raw.block_offset` exists to say where that block actually is.
 
 ---
 

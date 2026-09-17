@@ -233,6 +233,103 @@ if [ "$HAVE_BSDTAR" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ -m, the member filter\033[0m\n'
+
+out="$("$TMD" -f gnu.tar -m hello.txt 2>/dev/null)"
+check_contains "a bare name matches the basename at any depth" "$out" "tree/hello.txt"
+if printf '%s' "$out" | grep -q 'big.bin'; then
+  bad "-m let through a member that does not match"
+else
+  ok "-m keeps out what does not match"
+fi
+
+# The offset is the point of the feature: it is what tells two members with the
+# same path apart.
+check_contains "a matched line carries the member's offset" "$out" "@"
+
+out="$("$TMD" -f gnu.tar -m '*.bin' 2>/dev/null)"
+check_contains "a glob matches the basename" "$out" "big.bin"
+
+out="$("$TMD" -f gnu.tar -m 'tree/sub/*' 2>/dev/null)"
+check_contains "a pattern with a slash matches the whole path" "$out" "tree/sub/"
+
+out="$("$TMD" -f gnu.tar -m hello.txt -m '*.bin' 2>/dev/null)"
+check_contains "several -m patterns are an either/or (1)" "$out" "hello.txt"
+check_contains "several -m patterns are an either/or (2)" "$out" "big.bin"
+
+# It is a filter, so it must not need to seek: the pipe form has to work too.
+out="$(cat gnu.tar | "$TMD" -m hello.txt 2>/dev/null)"
+check_contains "-m works on a pipe, without buffering" "$out" "tree/hello.txt"
+
+"$TMD" -f gnu.tar -m hello.txt > /dev/null 2>&1
+check_status "a match exits 0" "$?" 0
+"$TMD" -f gnu.tar -m 'no-such-member.xyz' > /dev/null 2>&1
+check_status "no match exits 4" "$?" 4
+# An unreadable archive is the more important answer than "no match".
+"$TMD" -f /nonexistent.tar -m 'anything' > /dev/null 2>&1
+check_status "an unreadable archive still exits 1, not 4" "$?" 1
+
+out="$("$TMD" -f gnu.tar -m '*.bin' -S 2>/dev/null)"
+check_contains "the summary reports what matched" "$out" "matched"
+# ...and still describes the whole archive, not the filtered subset.
+check_contains "the summary still counts every member" "$out" "members"
+
+# ---------------------------------------------------------------------------
+# The reason this belongs in tmd rather than in `tar -t | grep`: an archive can
+# hold the same path twice (tar -r appends, an incremental backup re-adds a
+# changed file), extraction silently keeps the last, and nothing else will show
+# you both.
+cp gnu.tar dup.tar
+echo "a replacement, longer than the original" > tree/hello.txt
+tar --format=gnu -rf dup.tar tree/hello.txt 2>/dev/null
+dups="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -c 'tree/hello.txt')"
+check "both copies of a duplicated path are reported" "$dups" "2"
+offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sort -u | wc -l)"
+check "each copy reports a different offset" "$offsets" "2"
+
+# ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ --sort\033[0m\n'
+
+# Read the path from CSV rather than from the listing: the last field of a
+# listing line is a symlink's TARGET, not its path, which is what the first
+# version of this check compared and why it failed on an archive containing a
+# symlink.
+paths="$("$TMD" -f gnu.tar --sort=path -t CSV 2>/dev/null | tail -n +2 | cut -d, -f1)"
+if [ "$paths" = "$(printf '%s\n' "$paths" | LC_ALL=C sort)" ]; then
+  ok "--sort=path puts the paths in order"
+else
+  bad "--sort=path did not order the paths"
+  note "got: $(printf '%s' "$paths" | tr '\n' ' ')"
+fi
+
+biggest="$("$TMD" -f gnu.tar --sort=size --reverse 2>/dev/null | head -1)"
+check_contains "--sort=size --reverse puts the largest first" "$biggest" "big.bin"
+
+# Sorting must not lose or invent members.
+plain_count="$("$TMD" -f gnu.tar 2>/dev/null | wc -l)"
+sorted_count="$("$TMD" -f gnu.tar --sort=size 2>/dev/null | wc -l)"
+check "sorting changes the order, not the membership" "$plain_count" "$sorted_count"
+
+# The same members, whatever the order: sorting both listings must make them
+# identical.
+a="$("$TMD" -f gnu.tar 2>/dev/null | sort)"
+b="$("$TMD" -f gnu.tar --sort=mtime 2>/dev/null | sort)"
+check "a sorted listing holds exactly the same lines" "$a" "$b"
+
+"$TMD" -f gnu.tar --sort=nonsense > /dev/null 2>&1
+check_status "an unknown sort key is a usage error" "$?" 2
+
+# It has to work in the machine formats too, where the entries array is simply
+# emitted in the sorted order.
+if command -v python3 > /dev/null 2>&1; then
+  ordered="$("$TMD" -f gnu.tar --sort=path -t JSON 2>/dev/null | python3 -c '
+import json, sys
+paths = [e["path"] for e in json.load(sys.stdin)["entries"]]
+print("yes" if paths == sorted(paths) else "no")' 2>/dev/null)"
+  check "--sort orders the JSON entries too" "$ordered" "yes"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ output formats\033[0m\n'
 
 # -t and --format are the same switch. --format is in a released manpage and

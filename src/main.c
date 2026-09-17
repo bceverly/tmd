@@ -36,12 +36,14 @@ static void report_warnings(const struct tmd_archive *a, const struct tmd_entry 
 {
     size_t i;
 
-    if (opt->quiet)
+    if (opt->quiet) {
         return;
-    for (i = 0; i < e->nwarnings; i++)
+    }
+    for (i = 0; i < e->nwarnings; i++) {
         (void)fprintf(stderr, "tmd: %s: %s: %s\n", a->name,
                       e->path && e->path[0] ? e->path : "(unnamed member)",
                       e->warnings[i].text);
+    }
 }
 
 static void report_archive_warnings(const struct tmd_archive *a,
@@ -49,10 +51,12 @@ static void report_archive_warnings(const struct tmd_archive *a,
 {
     size_t i;
 
-    if (opt->quiet)
+    if (opt->quiet) {
         return;
-    for (i = from; i < a->nwarnings; i++)
+    }
+    for (i = from; i < a->nwarnings; i++) {
         (void)fprintf(stderr, "tmd: %s: %s\n", a->name, a->warnings[i].text);
+    }
 }
 
 /* Reads one archive into the renderer. Returns the exit status this archive
@@ -99,8 +103,9 @@ static int dump_archive(const char *path, struct tmd_render *rd,
         /* A missing end-of-archive marker means the file was cut short, which
          * is a finding whether or not every header that survived is intact. */
         if (opt->check && (archive->bad_checksums > 0 || !archive->eof_marker ||
-                           archive->trailing_garbage))
+                           archive->trailing_garbage)) {
             status = TMD_EXIT_CHECK;
+                           }
     }
 
     tmd_reader_free(reader);
@@ -176,10 +181,25 @@ int main(int argc, char **argv)
         /* The worst outcome wins, and one unreadable archive does not stop the
          * others: `tmd -f a.tar -f b.tar` should report on b even when a is
          * missing. */
-        if (one > status)
+        if (one > status) {
             status = one;
+        }
     }
     tmd_render_finish(rd);
+
+    /*
+     * -m was given and nothing matched.
+     *
+     * Only when nothing worse happened: an unreadable archive or a failed
+     * --check is the more important answer, and reporting "no match" for a file
+     * that could not be read would be actively misleading. Checked across every
+     * archive, so `tmd -f a.tar -f b.tar -m x` is satisfied by a match in
+     * either.
+     */
+    if (status == TMD_EXIT_OK && cli.options.nmatch > 0 &&
+        tmd_render_matched(rd) == 0) {
+        status = TMD_EXIT_NOMATCH;
+    }
     tmd_render_free(rd);
 
     /*

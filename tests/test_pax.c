@@ -22,8 +22,9 @@ static const struct tmd_entry *first_entry(const struct tarbuild *tb,
 
     *src = tmd_source_open_memory(tb->buf.data, tb->buf.len, "(test)");
     *reader = tmd_reader_new(*src);
-    if (tmd_reader_next(*reader, &e) != 1)
+    if (tmd_reader_next(*reader, &e) != 1) {
         return NULL;
+    }
     return e;
 }
 
@@ -37,9 +38,11 @@ static const char *pax_value(const struct tmd_entry *e, const char *key)
 {
     size_t i;
 
-    for (i = 0; i < e->npax; i++)
-        if (strcmp(e->pax[i].key, key) == 0)
+    for (i = 0; i < e->npax; i++) {
+        if (strcmp(e->pax[i].key, key) == 0) {
             return e->pax[i].value;
+        }
+    }
     return NULL;
 }
 
@@ -98,8 +101,9 @@ static void test_pax_fractions(void)
         tb_end(&tb);
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e)
+        if (e) {
             CHECK_INT(e->mtime.nsec, 500000000);
+        }
         done(src, reader);
         tb_free(&tb);
     }
@@ -113,8 +117,9 @@ static void test_pax_fractions(void)
         tb_end(&tb);
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e)
+        if (e) {
             CHECK_INT(e->mtime.nsec, 123456789);
+        }
         done(src, reader);
         tb_free(&tb);
     }
@@ -128,8 +133,9 @@ static void test_pax_fractions(void)
         tb_end(&tb);
         e = first_entry(&tb, &src, &reader);
         CHECK(e != NULL);
-        if (e)
+        if (e) {
             CHECK_INT(e->mtime.sec, -86400);
+        }
         done(src, reader);
         tb_free(&tb);
     }

@@ -18,8 +18,9 @@ static void put_octal(char *field, size_t len, unsigned long long value)
 {
     size_t i;
 
-    if (len == 0)
+    if (len == 0) {
         return;
+    }
     field[len - 1] = '\0';
     for (i = len - 1; i-- > 0;) {
         field[i] = (char)('0' + (value & 7));
@@ -46,11 +47,13 @@ static void put_str(char *field, size_t len, const char *s)
     size_t n;
 
     memset(field, 0, len);
-    if (!s)
+    if (!s) {
         return;
+    }
     n = strlen(s);
-    if (n > len)
+    if (n > len) {
         n = len; /* a name that fills the field has no terminator */
+    }
     memcpy(field, s, n);
 }
 
@@ -65,15 +68,17 @@ void tb_header(struct tarbuild *tb, const struct tb_hdr *h)
     put_octal(block + 100, 8, h->mode);
     put_octal(block + 108, 8, (unsigned long long)h->uid);
     put_octal(block + 116, 8, (unsigned long long)h->gid);
-    if (h->base256_size)
+    if (h->base256_size) {
         put_base256(block + 124, 12, h->size);
-    else
+    } else {
         put_octal(block + 124, 12, h->size);
+    }
     put_octal(block + 136, 12, (unsigned long long)h->mtime);
     block[156] = h->typeflag ? h->typeflag : '0';
     put_str(block + 157, 100, h->linkname);
-    if (h->magic)
+    if (h->magic) {
         memcpy(block + 257, h->magic, 8);
+    }
     put_str(block + 265, 32, h->uname);
     put_str(block + 297, 32, h->gname);
     if (h->has_dev) {
@@ -90,32 +95,39 @@ void tb_header(struct tarbuild *tb, const struct tb_hdr *h)
 
     if (h->nsparse > 0) {
         size_t pairs = h->nsparse / 2;
-        if (pairs > 4)
+        if (pairs > 4) {
             pairs = 4;
+        }
         for (i = 0; i < pairs; i++) {
             put_octal(block + 386 + i * 24, 12, h->sparse[i * 2]);
             put_octal(block + 386 + i * 24 + 12, 12, h->sparse[i * 2 + 1]);
         }
     }
-    if (h->gnu_sparse_isext)
+    if (h->gnu_sparse_isext) {
         block[482] = 1;
-    if (h->gnu_realsize)
+    }
+    if (h->gnu_realsize) {
         put_octal(block + 483, 12, h->gnu_realsize);
-    if (h->star_signature)
+    }
+    if (h->star_signature) {
         memcpy(block + 508, "tar\0", 4);
+    }
 
     /* The checksum is computed over the block with its own field read as
      * spaces, so the field is filled with spaces first. */
     memset(block + 148, ' ', 8);
-    for (i = 0; i < TMD_BLOCK_SIZE; i++)
+    for (i = 0; i < TMD_BLOCK_SIZE; i++) {
         sum += (unsigned char)block[i];
-    if (h->bad_checksum)
+    }
+    if (h->bad_checksum) {
         sum += 1;
+    }
 
-    if (h->garbage_checksum)
+    if (h->garbage_checksum) {
         memcpy(block + 148, "99999999", 8);
-    else
+    } else {
         (void)snprintf(block + 148, 8, "%06o", sum);
+    }
 
     tmd_buf_add(&tb->buf, block, TMD_BLOCK_SIZE);
 }
@@ -132,8 +144,9 @@ void tb_data(struct tarbuild *tb, const void *data, size_t len)
 
     tmd_buf_add(&tb->buf, data, len);
     remainder = len % TMD_BLOCK_SIZE;
-    if (remainder)
+    if (remainder) {
         tmd_buf_add(&tb->buf, padding, TMD_BLOCK_SIZE - remainder);
+    }
 }
 
 void tb_zeros(struct tarbuild *tb, size_t len)
@@ -144,13 +157,15 @@ void tb_zeros(struct tarbuild *tb, size_t len)
     memset(chunk, 0, sizeof(chunk));
     while (written < len) {
         size_t n = len - written;
-        if (n > sizeof(chunk))
+        if (n > sizeof(chunk)) {
             n = sizeof(chunk);
+        }
         tmd_buf_add(&tb->buf, chunk, n);
         written += n;
     }
-    if (len % TMD_BLOCK_SIZE)
+    if (len % TMD_BLOCK_SIZE) {
         tmd_buf_add(&tb->buf, chunk, TMD_BLOCK_SIZE - (len % TMD_BLOCK_SIZE));
+    }
 }
 
 void tb_zero_block(struct tarbuild *tb)
@@ -186,8 +201,9 @@ void tb_file(struct tarbuild *tb, const char *name, const char *content,
         h.gname = "bceverly";
     }
     tb_header(tb, &h);
-    if (len)
+    if (len) {
         tb_data(tb, content, len);
+    }
 }
 
 void tb_pax(struct tarbuild *tb, char typeflag, const char *const *records,

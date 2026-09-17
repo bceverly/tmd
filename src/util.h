@@ -104,6 +104,10 @@ bool  tmd_base64_decode(const char *s, struct tmd_buf *out);
  * be read, and a directory whose type character came from the mode would print
  * as a plain file.
  */
+/* find(1)'s matching rule: a pattern containing '/' is matched against the
+ * whole path, one without it against the basename. Case-sensitive. */
+bool tmd_path_matches(const char *path, const char *pattern);
+
 void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11]);
 
 /* 1.4K / 23.7M / 4.0G, to three significant figures. */

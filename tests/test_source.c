@@ -81,8 +81,9 @@ static void test_file_source(void)
     CHECK(f != NULL);
     if (f) {
         size_t i;
-        for (i = 0; i < 100; i++)
+        for (i = 0; i < 100; i++) {
             (void)fputc((int)('a' + (i % 26)), f);
+        }
         (void)fclose(f);
     }
 

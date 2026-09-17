@@ -222,8 +222,9 @@ static char *render_to_string(const struct tmd_options *opt,
     size_t             got;
     size_t             i;
 
-    if (fd < 0)
+    if (fd < 0) {
         return tmd_xstrdup("");
+    }
     f = fdopen(fd, "w+b");
     if (!f) {
         (void)remove(path);
@@ -232,8 +233,9 @@ static char *render_to_string(const struct tmd_options *opt,
 
     rd = tmd_render_new(f, opt, 1);
     tmd_render_archive_begin(rd, archive);
-    for (i = 0; i < count; i++)
+    for (i = 0; i < count; i++) {
         tmd_render_entry(rd, &entries[i]);
+    }
     tmd_render_archive_end(rd, archive);
     tmd_render_finish(rd);
     tmd_render_free(rd);
@@ -241,8 +243,9 @@ static char *render_to_string(const struct tmd_options *opt,
     (void)fflush(f);
     rewind(f);
     tmd_buf_init(&out);
-    while ((got = fread(chunk, 1, sizeof(chunk), f)) > 0)
+    while ((got = fread(chunk, 1, sizeof(chunk), f)) > 0) {
         tmd_buf_add(&out, chunk, got);
+    }
     (void)fclose(f);
     (void)remove(path);
     return tmd_buf_detach(&out);
@@ -637,6 +640,152 @@ static void test_exhaustive_json(void)
     }
 }
 
+/* Where each path appears in the output, for asserting an order. */
+static long position_of(const char *haystack, const char *needle)
+{
+    const char *at = strstr(haystack, needle);
+
+    return at ? (long)(at - haystack) : -1;
+}
+
+static void test_match_and_sort(void)
+{
+    struct tmd_archive a;
+    struct tmd_entry   e[3];
+    struct tmd_options opt;
+    const char        *patterns[2];
+    char              *out;
+    size_t             i;
+
+    memset(&a, 0, sizeof(a));
+    a.name = (char *)"t.tar";
+    a.format = TMD_FMT_PAX;
+    a.entries = 3;
+
+    for (i = 0; i < 3; i++) {
+        make_entry(&e[i]);
+    }
+    e[0].path = (char *)"etc/b.conf";
+    e[0].size = 300;
+    e[0].offset = 0;
+    e[0].mtime.sec = 3000;
+    e[1].path = (char *)"a.txt";
+    e[1].size = 100;
+    e[1].offset = 1024;
+    e[1].mtime.sec = 1000;
+    e[2].path = (char *)"etc/c.conf";
+    e[2].size = 100; /* ties with a.txt, to pin the tiebreak */
+    e[2].offset = 2048;
+    e[2].mtime.sec = 2000;
+
+    TEST_CASE("--sort=path orders by the stored path");
+    default_options(&opt);
+    opt.sort = TMD_SORT_PATH;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK(position_of(out, "a.txt") < position_of(out, "etc/b.conf"));
+    CHECK(position_of(out, "etc/b.conf") < position_of(out, "etc/c.conf"));
+    free(out);
+
+    TEST_CASE("--sort=size orders by size");
+    default_options(&opt);
+    opt.sort = TMD_SORT_SIZE;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK(position_of(out, "a.txt") < position_of(out, "etc/b.conf"));
+    free(out);
+
+    /*
+     * Equal keys keep the archive's own order, so a listing can be diffed
+     * against itself. a.txt (@1024) and etc/c.conf (@2048) are both 100 bytes.
+     */
+    TEST_CASE("equal keys fall back to the archive order");
+    default_options(&opt);
+    opt.sort = TMD_SORT_SIZE;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK(position_of(out, "a.txt") < position_of(out, "etc/c.conf"));
+    free(out);
+
+    TEST_CASE("--reverse inverts the key but not the tiebreak");
+    default_options(&opt);
+    opt.sort = TMD_SORT_SIZE;
+    opt.reverse = true;
+    out = render_to_string(&opt, &a, e, 3);
+    /* The 300-byte member comes first now... */
+    CHECK(position_of(out, "etc/b.conf") < position_of(out, "a.txt"));
+    /* ...but the two 100-byte members are still in archive order. */
+    CHECK(position_of(out, "a.txt") < position_of(out, "etc/c.conf"));
+    free(out);
+
+    TEST_CASE("--sort=mtime orders by the stored time");
+    default_options(&opt);
+    opt.sort = TMD_SORT_MTIME;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK(position_of(out, "a.txt") < position_of(out, "etc/c.conf"));
+    CHECK(position_of(out, "etc/c.conf") < position_of(out, "etc/b.conf"));
+    free(out);
+
+    TEST_CASE("-m keeps only the members that match");
+    default_options(&opt);
+    patterns[0] = "*.conf";
+    opt.match = patterns;
+    opt.nmatch = 1;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK_CONTAINS(out, "etc/b.conf");
+    CHECK_CONTAINS(out, "etc/c.conf");
+    CHECK(position_of(out, "a.txt") < 0);
+    free(out);
+
+    /* The offset is what makes two members with the same path tellable apart,
+     * which is the reason the feature exists. */
+    TEST_CASE("a matched line carries the member's offset");
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK_CONTAINS(out, "@2048");
+    free(out);
+
+    TEST_CASE("several -m patterns are an either/or");
+    default_options(&opt);
+    patterns[0] = "*.conf";
+    patterns[1] = "a.txt";
+    opt.match = patterns;
+    opt.nmatch = 2;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK_CONTAINS(out, "a.txt");
+    CHECK_CONTAINS(out, "etc/b.conf");
+    free(out);
+
+    TEST_CASE("the summary counts the matches and still describes the archive");
+    default_options(&opt);
+    patterns[0] = "*.conf";
+    opt.match = patterns;
+    opt.nmatch = 1;
+    opt.with_summary = true;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK_CONTAINS(out, "matched       2 of 3 members");
+    CHECK_CONTAINS(out, "members       3"); /* the whole archive, not the matches */
+    free(out);
+
+    TEST_CASE("JSON reports the match count beside the member count");
+    default_options(&opt);
+    patterns[0] = "*.conf";
+    opt.match = patterns;
+    opt.nmatch = 1;
+    opt.output = TMD_OUT_JSON;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK_CONTAINS(out, "\"members\": 3");
+    CHECK_CONTAINS(out, "\"matched\": 2");
+    free(out);
+
+    TEST_CASE("-m and --sort compose: filter first, then order");
+    default_options(&opt);
+    patterns[0] = "*.conf";
+    opt.match = patterns;
+    opt.nmatch = 1;
+    opt.sort = TMD_SORT_SIZE;
+    out = render_to_string(&opt, &a, e, 3);
+    CHECK(position_of(out, "a.txt") < 0);
+    CHECK(position_of(out, "etc/c.conf") < position_of(out, "etc/b.conf"));
+    free(out);
+}
+
 void test_render(void)
 {
     test_listing_line();
@@ -644,4 +793,5 @@ void test_render(void)
     test_output_formats();
     test_extreme_timestamps();
     test_exhaustive_json();
+    test_match_and_sort();
 }

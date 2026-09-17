@@ -45,6 +45,13 @@ TMD_OPT('c', "check",         no_argument,       NULL,
         "check the archive for damage (checksums, truncation); exit 3 on any")
 TMD_OPT('q', "quiet",         no_argument,       NULL,
         "do not write warnings about damaged headers to standard error")
+TMD_OPT('m', "match",         required_argument, "PATTERN",
+        "show only members matching PATTERN; repeatable. A pattern with a '/' "
+        "matches the whole path, one without it the basename")
+TMD_OPT(OPT_SORT, "sort",     required_argument, "KEY",
+        "order the listing by path, size, mtime or offset (reads it all first)")
+TMD_OPT(OPT_REVERSE, "reverse", no_argument,     NULL,
+        "reverse the --sort order")
 TMD_OPT('t', "output-type",   required_argument, "TYPE",
         "output type: TXT (the default), JSON or CSV; case does not matter")
 TMD_OPT(OPT_FORMAT, "format", required_argument, "FMT",

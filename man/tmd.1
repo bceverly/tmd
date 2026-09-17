@@ -100,6 +100,15 @@ check the archive for damage (checksums, truncation); exit 3 on any
 .B \-q, \-\-quiet
 do not write warnings about damaged headers to standard error
 .TP
+.B \-m, \-\-match=PATTERN
+show only members matching PATTERN; repeatable. A pattern with a '/' matches the whole path, one without it the basename
+.TP
+.B     \-\-sort=KEY
+order the listing by path, size, mtime or offset (reads it all first)
+.TP
+.B     \-\-reverse
+reverse the \-\-sort order
+.TP
 .B \-t, \-\-output\-type=TYPE
 output type: TXT (the default), JSON or CSV; case does not matter
 .TP
@@ -127,6 +136,9 @@ the command line was wrong
 .TP
 .B 3
 \-\-check found damage: a bad checksum or a truncated archive
+.TP
+.B 4
+\-\-match was given and no member matched
 .SH EXAMPLES
 .TP
 .B tmd \-f archive.tar

@@ -133,10 +133,21 @@ fi
 # ---------------------------------------------------------------------------
 section "clang-tidy"
 if command -v clang-tidy > /dev/null 2>&1; then
-  # bugprone, cert and the clang analyzer. readability-* and the naming checks
-  # are deliberately off: they encode a house style that is not this one, and a
-  # linter that reports 400 things nobody intends to change is a linter that
-  # gets switched off entirely.
+  # bugprone, cert and the clang analyzer. Most of readability-* and the naming
+  # checks are deliberately off: they encode a house style that is not this
+  # one, and a linter that reports 400 things nobody intends to change is a
+  # linter that gets switched off entirely.
+  #
+  # One readability check is ON, by name, because it IS this house style:
+  #
+  #   readability-braces-around-statements
+  #       Every if/else/for/while body is braced, including a single statement.
+  #       Not a matter of taste: an unbraced body is one careless edit away from
+  #       a second statement that looks guarded and is not. That is exactly
+  #       CVE-2014-1266 -- Apple's "goto fail", a duplicated `goto fail;` under
+  #       an unbraced `if` that skipped the rest of a TLS signature check and
+  #       shipped. The check is cheap, the fix is mechanical, and the failure it
+  #       prevents is invisible in review.
   #
   # Four checks are disabled by name. Each is off because it does not apply to
   # C as written here, not because its findings were inconvenient — everything
@@ -171,7 +182,7 @@ if command -v clang-tidy > /dev/null 2>&1; then
   #       a newer clang says nothing. The sibling checks valist.Unterminated
   #       and valist.CopyToSelf stay on — those catch real bugs.
   if clang-tidy --quiet \
-       '-checks=-*,bugprone-*,cert-*,clang-analyzer-*,misc-*,performance-*,-misc-include-cleaner,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-multi-level-implicit-pointer-conversion,-clang-analyzer-valist.Uninitialized' \
+       '-checks=-*,bugprone-*,cert-*,clang-analyzer-*,misc-*,performance-*,readability-braces-around-statements,-misc-include-cleaner,-bugprone-easily-swappable-parameters,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,-bugprone-multi-level-implicit-pointer-conversion,-clang-analyzer-valist.Uninitialized' \
        --warnings-as-errors='*' \
        src/*.c -- -std=c11 "${CPPFLAGS_ALL[@]}" > "$WORK/clang-tidy.log" 2>&1; then
     ok "no findings"
@@ -320,6 +331,18 @@ if [ -x ./bin/tmd ]; then
   else
     bad "man/tmd.1 is out of date — run 'make man' and commit it"
     head -20 "$WORK/man.log" | sed 's/^/      /'
+  fi
+
+  # The README states the same option list a third time. It was not checked
+  # here for a long while and duly went stale: it was still presenting --format
+  # as the only way to pick an output type well after -t existed. Three copies
+  # of one list is fine as long as two of them are generated.
+  if scripts/gen-readme-usage.sh --check ./bin/tmd README.md \
+       > "$WORK/readme.log" 2>&1; then
+    ok "the README's Usage block matches the program's --help"
+  else
+    bad "the README's Usage block is out of date"
+    sed 's/^/      /' "$WORK/readme.log"
   fi
 else
   skip "./bin/tmd is not built — run 'make build' before 'make lint'"

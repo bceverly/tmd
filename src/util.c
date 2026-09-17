@@ -4,6 +4,7 @@
  */
 #include "util.h"
 
+#include <fnmatch.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,24 +25,27 @@ void *tmd_xmalloc(size_t n)
      * failure. Ask for a byte instead so a zero-length string still has an
      * address to point at. */
     void *p = malloc(n ? n : 1);
-    if (!p)
+    if (!p) {
         oom(n);
+    }
     return p;
 }
 
 void *tmd_xcalloc(size_t count, size_t size)
 {
     void *p = calloc(count ? count : 1, size ? size : 1);
-    if (!p)
+    if (!p) {
         oom(count * size);
+    }
     return p;
 }
 
 void *tmd_xrealloc(void *p, size_t n)
 {
     void *q = realloc(p, n ? n : 1);
-    if (!q)
+    if (!q) {
         oom(n);
+    }
     return q;
 }
 
@@ -58,8 +62,9 @@ char *tmd_xstrndup(const char *s, size_t n)
     size_t len = 0;
     char  *p;
 
-    while (len < n && s[len] != '\0')
+    while (len < n && s[len] != '\0') {
         len++;
+    }
     p = tmd_xmalloc(len + 1);
     memcpy(p, s, len);
     p[len] = '\0';
@@ -79,10 +84,12 @@ char *tmd_xvasprintf(const char *fmt, va_list ap)
      * passing a format that is not a literal it can verify. */
     n = vsnprintf(stack, sizeof(stack), fmt, copy); /* Flawfinder: ignore */
     va_end(copy);
-    if (n < 0)
+    if (n < 0) {
         return tmd_xstrdup("");
-    if ((size_t)n < sizeof(stack))
+    }
+    if ((size_t)n < sizeof(stack)) {
         return tmd_xstrdup(stack);
+    }
 
     out = tmd_xmalloc((size_t)n + 1);
     (void)vsnprintf(out, (size_t)n + 1, fmt, ap); /* Flawfinder: ignore */
@@ -121,19 +128,23 @@ static void buf_reserve(struct tmd_buf *b, size_t extra)
 {
     size_t want = b->len + extra + 1; /* +1 keeps room for the terminator */
 
-    if (want <= b->cap)
+    if (want <= b->cap) {
         return;
-    if (b->cap == 0)
+    }
+    if (b->cap == 0) {
         b->cap = 64;
-    while (b->cap < want)
+    }
+    while (b->cap < want) {
         b->cap *= 2;
+    }
     b->data = tmd_xrealloc(b->data, b->cap);
 }
 
 void tmd_buf_add(struct tmd_buf *b, const void *data, size_t n)
 {
-    if (n == 0)
+    if (n == 0) {
         return;
+    }
     buf_reserve(b, n);
     memcpy(b->data + b->len, data, n);
     b->len += n;
@@ -187,9 +198,11 @@ bool tmd_field_empty(const char *field, size_t len)
 {
     size_t i;
 
-    for (i = 0; i < len; i++)
-        if (field[i] != '\0' && field[i] != ' ')
+    for (i = 0; i < len; i++) {
+        if (field[i] != '\0' && field[i] != ' ') {
             return false;
+        }
+    }
     return true;
 }
 
@@ -212,8 +225,9 @@ static bool parse_base256(const char *field, size_t len, int64_t *out)
     for (i = 0; i + 8 < len; i++) {
         unsigned char expect = negative ? 0xff : 0x00;
         unsigned char byte = (unsigned char)(i == 0 ? (p[0] & 0x7f) : p[i]);
-        if (byte != (i == 0 ? (unsigned char)(expect & 0x7f) : expect))
+        if (byte != (i == 0 ? (unsigned char)(expect & 0x7f) : expect)) {
             return false;
+        }
     }
 
     for (; i < len; i++) {
@@ -232,38 +246,45 @@ static bool parse_octal(const char *field, size_t len, uint64_t *out)
     bool     digits = false;
 
     /* Leading whitespace is legal; some writers right-align the number. */
-    while (i < len && (field[i] == ' ' || field[i] == '\t'))
+    while (i < len && (field[i] == ' ' || field[i] == '\t')) {
         i++;
+    }
 
     for (; i < len && field[i] >= '0' && field[i] <= '7'; i++) {
         /* An 8-byte field of octal digits cannot overflow, but a caller may
          * hand us a longer one and a hostile archive will. */
-        if (value > (UINT64_MAX >> 3))
+        if (value > (UINT64_MAX >> 3)) {
             return false;
+        }
         value = (value << 3) | (uint64_t)(field[i] - '0');
         digits = true;
     }
 
     /* Whatever is left has to be padding. A field like "0644x" is corrupt,
      * and quietly accepting the first four characters of it hides that. */
-    for (; i < len; i++)
-        if (field[i] != '\0' && field[i] != ' ' && field[i] != '\t')
+    for (; i < len; i++) {
+        if (field[i] != '\0' && field[i] != ' ' && field[i] != '\t') {
             return false;
+        }
+    }
 
-    if (!digits)
+    if (!digits) {
         return false;
+    }
     *out = value;
     return true;
 }
 
 bool tmd_parse_num(const char *field, size_t len, uint64_t *out)
 {
-    if (len == 0)
+    if (len == 0) {
         return false;
+    }
     if ((unsigned char)field[0] & 0x80) {
         int64_t signed_value;
-        if (!parse_base256(field, len, &signed_value) || signed_value < 0)
+        if (!parse_base256(field, len, &signed_value) || signed_value < 0) {
             return false;
+        }
         *out = (uint64_t)signed_value;
         return true;
     }
@@ -274,14 +295,18 @@ bool tmd_parse_num_signed(const char *field, size_t len, int64_t *out)
 {
     uint64_t unsigned_value;
 
-    if (len == 0)
+    if (len == 0) {
         return false;
-    if ((unsigned char)field[0] & 0x80)
+    }
+    if ((unsigned char)field[0] & 0x80) {
         return parse_base256(field, len, out);
-    if (!parse_octal(field, len, &unsigned_value))
+    }
+    if (!parse_octal(field, len, &unsigned_value)) {
         return false;
-    if (unsigned_value > (uint64_t)INT64_MAX)
+    }
+    if (unsigned_value > (uint64_t)INT64_MAX) {
         return false;
+    }
     *out = (int64_t)unsigned_value;
     return true;
 }
@@ -290,8 +315,9 @@ void tmd_field_str(const char *field, size_t len, char *out)
 {
     size_t i;
 
-    for (i = 0; i < len && field[i] != '\0'; i++)
+    for (i = 0; i < len && field[i] != '\0'; i++) {
         out[i] = field[i];
+    }
     out[i] = '\0';
 }
 
@@ -334,28 +360,33 @@ static bool utf8_scan(const char *s, size_t len, size_t *bad)
         } else {
             goto bad_at; /* a continuation byte or an over-long lead */
         }
-        if (i + extra >= len)
+        if (i + extra >= len) {
             goto bad_at; /* the continuation bytes run past the end */
+        }
         for (size_t k = 1; k <= extra; k++) {
-            if ((p[i + k] & 0xc0) != 0x80)
+            if ((p[i + k] & 0xc0) != 0x80) {
                 goto bad_at;
+            }
             cp = (cp << 6) | (uint32_t)(p[i + k] & 0x3f);
         }
         /* Reject the encodings that are valid bytes but not valid text:
          * over-long forms, surrogates, and anything past U+10FFFF. Those are
          * exactly what a path crafted to slip past a filter looks like. */
         if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) ||
-            (extra == 3 && cp < 0x10000))
+            (extra == 3 && cp < 0x10000)) {
             goto bad_at;
-        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+            }
+        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
             goto bad_at;
+        }
         i += extra + 1;
     }
     return true;
 
 bad_at:
-    if (bad)
+    if (bad) {
         *bad = i;
+    }
     return false;
 }
 
@@ -406,10 +437,12 @@ char *tmd_base64_encode(const void *data, size_t n)
         size_t   have = n - i; /* 3, or 1 or 2 in the final group */
         uint32_t v = (uint32_t)p[i] << 16;
 
-        if (have > 1)
+        if (have > 1) {
             v |= (uint32_t)p[i + 1] << 8;
-        if (have > 2)
+        }
+        if (have > 2) {
             v |= p[i + 2];
+        }
 
         tmd_buf_addc(&b, B64[(v >> 18) & 0x3f]);
         tmd_buf_addc(&b, B64[(v >> 12) & 0x3f]);
@@ -432,11 +465,16 @@ char *tmd_base64_encode(const void *data, size_t n)
  */
 static int b64_value(unsigned char c)
 {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
+    if (c >= 'A' && c <= 'Z') { return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') { return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9') { return c - '0' + 52;
+    }
+    if (c == '+') { return 62;
+    }
+    if (c == '/') { return 63;
+    }
     return -1;
 }
 
@@ -447,20 +485,23 @@ bool tmd_base64_decode(const char *s, struct tmd_buf *out)
     uint32_t acc = 0;
     unsigned bits = 0;
 
-    if (len == 0 || (len % 4) != 0)
+    if (len == 0 || (len % 4) != 0) {
         return false;
+    }
     for (i = 0; i < len; i++) {
         int v;
 
         if (s[i] == '=') {
             /* Padding is only ever the last one or two characters. */
-            if (i + 2 < len || (i + 2 == len && s[i + 1] != '='))
+            if (i + 2 < len || (i + 2 == len && s[i + 1] != '=')) {
                 return false;
+            }
             break;
         }
         v = b64_value((unsigned char)s[i]);
-        if (v < 0)
+        if (v < 0) {
             return false;
+        }
         acc = (acc << 6) | (uint32_t)v;
         bits += 6;
         if (bits >= 8) {
@@ -469,6 +510,55 @@ bool tmd_base64_decode(const char *s, struct tmd_buf *out)
         }
     }
     return true;
+}
+
+/*
+ * find(1)'s rule, which is the one everybody already knows: a pattern with a
+ * slash in it is matched against the whole stored path, a pattern without one
+ * against the basename alone. So `nginx.conf` finds the file at any depth,
+ * while a pattern like "etc/nginx/" followed by a star finds what is under that
+ * directory. (Spelled out rather than written as a glob: the glob contains the
+ * two characters that open a comment, and -Wcomment rightly objects.)
+ *
+ * Case-sensitive, because a tar path is a string of bytes: two members
+ * differing only in case are two different members, and an archive can hold
+ * both.
+ */
+bool tmd_path_matches(const char *path, const char *pattern)
+{
+    char        stack[256];
+    char       *heap = NULL;
+    const char *base;
+    const char *end;
+    size_t      len;
+    bool        hit;
+
+    if (strchr(pattern, '/') != NULL) {
+        return fnmatch(pattern, path, 0) == 0;
+    }
+
+    /* A directory member is stored with a trailing slash ("etc/nginx/"), so its
+     * basename is the component before that slash and not the empty string
+     * after it. */
+    end = path + strlen(path);
+    while (end > path && end[-1] == '/') {
+        end--;
+    }
+    base = end;
+    while (base > path && base[-1] != '/') {
+        base--;
+    }
+    len = (size_t)(end - base);
+
+    if (len < sizeof(stack)) {
+        memcpy(stack, base, len);
+        stack[len] = '\0';
+        return fnmatch(pattern, stack, 0) == 0;
+    }
+    heap = tmd_xstrndup(base, len);
+    hit = fnmatch(pattern, heap, 0) == 0;
+    free(heap);
+    return hit;
 }
 
 void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11])
@@ -500,12 +590,15 @@ void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11])
     /* setuid/setgid/sticky replace the matching execute character, upper-case
      * when the execute bit underneath is not set — the same convention ls
      * uses, so a mode that is surprising looks surprising. */
-    if (mode & 04000)
+    if (mode & 04000) {
         out[3] = (out[3] == 'x') ? 's' : 'S';
-    if (mode & 02000)
+    }
+    if (mode & 02000) {
         out[6] = (out[6] == 'x') ? 's' : 'S';
-    if (mode & 01000)
+    }
+    if (mode & 01000) {
         out[9] = (out[9] == 'x') ? 't' : 'T';
+    }
     out[10] = '\0';
 }
 
@@ -519,12 +612,13 @@ const char *tmd_human_size(uint64_t bytes, char *buf, size_t bufsz)
         value /= 1024.0;
         unit++;
     }
-    if (unit == 0)
+    if (unit == 0) {
         (void)snprintf(buf, bufsz, "%uB", (unsigned)bytes);
-    else if (value < 10.0)
+    } else if (value < 10.0) {
         (void)snprintf(buf, bufsz, "%.1f%c", value, units[unit]);
-    else
+    } else {
         (void)snprintf(buf, bufsz, "%.0f%c", value, units[unit]);
+    }
     return buf;
 }
 
@@ -537,8 +631,9 @@ uint64_t tmd_round_up_blocks(uint64_t n)
      * into "skip nothing" and re-read the same header forever. The saturated
      * value is the largest multiple of the block size that fits, so a caller
      * that divides it by 512 still gets a whole number of blocks. */
-    if (n > UINT64_MAX - (TMD_BLOCK_SIZE - 1))
+    if (n > UINT64_MAX - (TMD_BLOCK_SIZE - 1)) {
         return (UINT64_MAX / TMD_BLOCK_SIZE) * TMD_BLOCK_SIZE;
+    }
     blocks = (n + TMD_BLOCK_SIZE - 1) / TMD_BLOCK_SIZE;
     return blocks * TMD_BLOCK_SIZE;
 }

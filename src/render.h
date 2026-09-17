@@ -31,6 +31,10 @@ void tmd_render_entry(struct tmd_render *rd, const struct tmd_entry *e);
 void tmd_render_archive_end(struct tmd_render *rd, const struct tmd_archive *a);
 void tmd_render_finish(struct tmd_render *rd);
 
+/* How many members -m let through, across every archive read. Zero with a
+ * pattern in effect is TMD_EXIT_NOMATCH. */
+uint64_t tmd_render_matched(const struct tmd_render *rd);
+
 /* Exposed for the tests: the listing line an entry produces in default mode,
  * and the JSON string escaping, which is the part with the sharp edges. */
 char *tmd_render_listing_line(const struct tmd_entry *e,

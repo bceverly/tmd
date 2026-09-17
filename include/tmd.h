@@ -356,6 +356,23 @@ enum tmd_output {
 };
 
 /* How the caller wants the archive rendered. Filled in by opts.c. */
+/*
+ * What --sort orders the listing by.
+ *
+ * Sorting is the one thing this program cannot do while streaming: the last
+ * member of an archive can sort first, so nothing can be printed until every
+ * member has been read. That is why it is opt-in and why TMD_SORT_NONE is the
+ * zero value -- an options struct nobody touched streams, as everything else
+ * here does.
+ */
+enum tmd_sort {
+    TMD_SORT_NONE = 0,
+    TMD_SORT_PATH,
+    TMD_SORT_SIZE,
+    TMD_SORT_MTIME,
+    TMD_SORT_OFFSET
+};
+
 struct tmd_options {
     enum tmd_output output;
     bool  long_form;    /* -l: every resolved field, one block per entry   */
@@ -378,6 +395,20 @@ struct tmd_options {
     bool  check;        /* -c: a checksum mismatch is an exit status       */
     bool  quiet;        /* -q: do not write warnings to stderr             */
     bool  color;        /* resolved from --color and isatty()              */
+
+    /*
+     * -m: show only members matching one of these fnmatch(3) patterns.
+     *
+     * A filter over the listing, not a separate mode: the summary and the
+     * archive report keep describing the whole file, because an archive's
+     * format and integrity are properties of the file and do not change
+     * because a pattern was supplied.
+     */
+    const char **match;
+    size_t       nmatch;
+
+    enum tmd_sort sort;    /* --sort: order the listing by this          */
+    bool          reverse; /* --reverse: and invert it                   */
 };
 
 const char *tmd_format_name(enum tmd_format f);

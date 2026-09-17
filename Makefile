@@ -246,13 +246,22 @@ lint: build ## Static analysis, the copyright audit and the manpage freshness ch
 security: build ## Run the same security scanners CI runs, locally
 	@scripts/security.sh
 
+# The manpage and the README's Usage block both restate `tmd --help`. Both are
+# generated, and `make lint` checks both, so adding an option updates all three
+# from the one definition in src/options.def.
 .PHONY: man
-man: $(BIN_DIR)/$(PROG) ## Force the manpage to be regenerated from --help
+man: docs ## Force the manpage to be regenerated from --help
+
+.PHONY: docs
+docs: $(BIN_DIR)/$(PROG) ## Regenerate the manpage and the README's Usage block
 	@scripts/gen-man.sh ./$(BIN_DIR)/$(PROG) $(MAN_PAGE)
+	@scripts/gen-readme-usage.sh ./$(BIN_DIR)/$(PROG) README.md
+	@printf '  \033[92m✓\033[0m %s and the README Usage block are current\n' "$(MAN_PAGE)"
 
 .PHONY: man-check
-man-check: build ## Fail if the committed manpage is out of date
+man-check: build ## Fail if the committed manpage or README block is out of date
 	@scripts/gen-man.sh --check ./$(BIN_DIR)/$(PROG) $(MAN_PAGE)
+	@scripts/gen-readme-usage.sh --check ./$(BIN_DIR)/$(PROG) README.md
 
 .PHONY: install-hooks
 install-hooks: ## Install the git pre-commit (lint) and pre-push (test) hooks

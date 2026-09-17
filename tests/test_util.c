@@ -89,8 +89,9 @@ static void test_buffer(void)
 
     TEST_CASE("growing past the initial capacity keeps the contents");
     tmd_buf_init(&b);
-    for (int i = 0; i < 500; i++)
+    for (int i = 0; i < 500; i++) {
         tmd_buf_addc(&b, 'x');
+    }
     CHECK_INT(b.len, 500);
     CHECK_INT(strlen(b.data), 500);
     tmd_buf_free(&b);
@@ -253,8 +254,9 @@ static void test_base64(void)
         char *enc;
         size_t k;
 
-        for (k = 0; k < sizeof(all); k++)
+        for (k = 0; k < sizeof(all); k++) {
             all[k] = (unsigned char)k;
+        }
         enc = tmd_base64_encode(all, sizeof(all));
         tmd_buf_init(&out);
         CHECK(tmd_base64_decode(enc, &out));
@@ -306,6 +308,57 @@ static void test_utf8_offset(void)
     CHECK(at == 2);
 }
 
+static void test_path_matching(void)
+{
+    /*
+     * find(1)'s rule, which is the whole of the design: a pattern with a slash
+     * is matched against the path, one without it against the basename.
+     */
+    TEST_CASE("a bare name matches the basename at any depth");
+    CHECK(tmd_path_matches("etc/nginx/nginx.conf", "nginx.conf"));
+    CHECK(tmd_path_matches("nginx.conf", "nginx.conf"));
+    CHECK(!tmd_path_matches("etc/nginx/nginx.conf", "nginx"));
+
+    TEST_CASE("a glob matches the basename");
+    CHECK(tmd_path_matches("etc/nginx/nginx.conf", "*.conf"));
+    CHECK(!tmd_path_matches("etc/nginx/nginx.conf", "*.txt"));
+
+    TEST_CASE("a pattern containing a slash matches the whole path");
+    CHECK(tmd_path_matches("etc/nginx/nginx.conf", "etc/nginx/*"));
+    CHECK(tmd_path_matches("var/logs/a.log", "*/logs/*"));
+    /* Without the slash rule this would match on the basename and be true. */
+    CHECK(!tmd_path_matches("etc/nginx/nginx.conf", "nginx/*.txt"));
+
+    /*
+     * A directory is stored with a trailing slash, so its basename is the
+     * component before that slash. Getting this wrong makes every directory
+     * match the empty string and nothing else.
+     */
+    TEST_CASE("a directory matches on the name before its trailing slash");
+    CHECK(tmd_path_matches("etc/nginx/", "nginx"));
+    CHECK(tmd_path_matches("etc/nginx/", "ngin*"));
+    CHECK(!tmd_path_matches("etc/nginx/", "etc"));
+
+    TEST_CASE("matching is case-sensitive");
+    CHECK(!tmd_path_matches("etc/NGINX.conf", "nginx.conf"));
+    CHECK(tmd_path_matches("etc/NGINX.conf", "NGINX.conf"));
+
+    TEST_CASE("a basename longer than the stack buffer still matches");
+    {
+        char path[600];
+        char pattern[600];
+        size_t i;
+
+        memcpy(path, "deep/", 5);
+        for (i = 5; i < sizeof(path) - 1; i++) {
+            path[i] = 'x';
+        }
+        path[sizeof(path) - 1] = '\0';
+        memcpy(pattern, path + 5, sizeof(path) - 5);
+        CHECK(tmd_path_matches(path, pattern));
+    }
+}
+
 void test_util(void)
 {
     test_numeric_fields();
@@ -318,4 +371,5 @@ void test_util(void)
     test_mode_string();
     test_human_size();
     test_rounding();
+    test_path_matching();
 }

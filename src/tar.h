@@ -31,6 +31,16 @@ void               tmd_reader_free(struct tmd_reader *r);
  */
 int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out);
 
+/*
+ * A copy of an entry that outlives the reader's own, and its free.
+ *
+ * tmd_reader_next recycles one entry, so anything holding on to one past the
+ * next call needs a clone. Used by --sort, which cannot order a listing it has
+ * not finished reading.
+ */
+struct tmd_entry *tmd_entry_clone(const struct tmd_entry *e);
+void              tmd_entry_free(struct tmd_entry *e);
+
 /* The accumulated archive-level facts. Complete only once next() has returned
  * 0; before that the counts are partial and `format` is the best guess so far. */
 const struct tmd_archive *tmd_reader_archive(const struct tmd_reader *r);

@@ -59,11 +59,13 @@ static void run_one_mode(const uint8_t *data, size_t size,
         /* A crafted archive can describe a great many members in very few
          * bytes. The fuzzer is looking for memory errors, not for slow inputs,
          * and a case that runs for a minute is a case that is not being run. */
-        if (++guard > 20000)
+        if (++guard > 20000) {
             break;
+        }
     }
-    if (rc == 0)
+    if (rc == 0) {
         tmd_render_archive_end(rd, tmd_reader_archive(reader));
+    }
     tmd_render_finish(rd);
 
     tmd_render_free(rd);
@@ -83,8 +85,9 @@ int tmd_fuzz_one(const uint8_t *data, size_t size)
      * their memory behavior, and nothing here reads what they wrote. */
     if (!sink) {
         sink = fopen("/dev/null", "w");
-        if (!sink)
+        if (!sink) {
             return 0;
+        }
     }
 
     for (i = 0; i < 6; i++) {
@@ -152,8 +155,9 @@ static void recompute_checksum(uint8_t *block)
     size_t   i;
 
     memset(block + 148, ' ', 8);
-    for (i = 0; i < TMD_BLOCK_SIZE; i++)
+    for (i = 0; i < TMD_BLOCK_SIZE; i++) {
         sum += block[i];
+    }
     (void)snprintf((char *)block + 148, 8, "%06o", sum & 0777777u);
 }
 
@@ -167,12 +171,14 @@ static size_t mutate(uint8_t *buf, size_t size, size_t capacity)
     for (r = 0; r < rounds; r++) {
         switch (rng_next() % 8) {
         case 0: /* flip a byte anywhere */
-            if (size)
+            if (size) {
                 buf[rng_below(size)] ^= (uint8_t)(1u << (rng_next() % 8));
+            }
             break;
         case 1: /* set a random byte to a random value */
-            if (size)
+            if (size) {
                 buf[rng_below(size)] = (uint8_t)rng_next();
+            }
             break;
         case 2: /* change a typeflag and keep the header valid */
             if (blocks) {
@@ -206,14 +212,16 @@ static size_t mutate(uint8_t *buf, size_t size, size_t capacity)
             }
             break;
         case 6: /* truncate, which is the most common real-world damage */
-            if (size > TMD_BLOCK_SIZE)
+            if (size > TMD_BLOCK_SIZE) {
                 size = rng_below(size);
+            }
             break;
         case 7: /* grow with junk, as a concatenated archive would */
             if (size + TMD_BLOCK_SIZE <= capacity) {
                 size_t i;
-                for (i = 0; i < TMD_BLOCK_SIZE; i++)
+                for (i = 0; i < TMD_BLOCK_SIZE; i++) {
                     buf[size + i] = (uint8_t)rng_next();
+                }
                 size += TMD_BLOCK_SIZE;
             }
             break;
@@ -239,8 +247,9 @@ static void load_seed(const char *path)
     long    size;
     uint8_t *data;
 
-    if (!f)
+    if (!f) {
         return;
+    }
     if (fseek(f, 0, SEEK_END) != 0) {
         (void)fclose(f);
         return;
@@ -292,8 +301,9 @@ static void on_death(void)
 {
     FILE *f;
 
-    if (!current_data)
+    if (!current_data) {
         return;
+    }
     f = fopen(crash_path, "wb");
     if (f) {
         (void)fwrite(current_data, 1, current_size, f);
@@ -355,11 +365,13 @@ int main(int argc, char **argv)
         (void)fprintf(stderr, "fuzz_tar: no seed archives were given\n");
         return 2;
     }
-    if (seed)
+    if (seed) {
         rng_state = seed;
+    }
     run_seed = rng_state;
-    if (__sanitizer_set_death_callback)
+    if (__sanitizer_set_death_callback) {
         __sanitizer_set_death_callback(on_death);
+    }
 
     buf = tmd_xmalloc(capacity);
     deadline = time(NULL) + (time_t)seconds;
@@ -389,8 +401,9 @@ int main(int argc, char **argv)
     }
 
     (void)printf("  %lu cases, no crashes\n", iteration);
-    for (i = 0; (size_t)i < nseeds; i++)
+    for (i = 0; (size_t)i < nseeds; i++) {
         free(seeds[i].data);
+    }
     free(seeds);
     free(buf);
     return 0;

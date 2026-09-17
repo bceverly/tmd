@@ -136,6 +136,9 @@ Options:
   -T, --full-time          include seconds, nanoseconds and the zone offset in timestamps
   -c, --check              check the archive for damage (checksums, truncation); exit 3 on any
   -q, --quiet              do not write warnings about damaged headers to standard error
+  -m, --match=PATTERN      show only members matching PATTERN; repeatable. A pattern with a '/' matches the whole path, one without it the basename
+      --sort=KEY           order the listing by path, size, mtime or offset (reads it all first)
+      --reverse            reverse the --sort order
   -t, --output-type=TYPE   output type: TXT (the default), JSON or CSV; case does not matter
       --format=FMT         the same thing, spelled the way releases before 1.2 spelled it
       --color[=WHEN]       colorize the listing: auto (the default), always or never
@@ -162,10 +165,12 @@ worked. `-f -` remains valid and means exactly the same thing, for scripts that
 would rather be explicit.
 
 **Exit status.** `0` the archive was read · `1` it could not be read · `2` the
-command line was wrong · `3` `--check` found damage. Three distinct failures
-rather than one, because the difference matters to a script: a mistyped flag is
-the caller's bug, an unreadable archive is the file's problem, and a bad
-checksum is a *finding* — the tool worked perfectly and the archive is damaged.
+command line was wrong · `3` `--check` found damage · `4` `--match` found no
+member. Four distinct failures rather than one, because the difference matters
+to a script: a mistyped flag is the caller's bug, an unreadable archive is the
+file's problem, a bad checksum is a *finding* — the tool worked perfectly and
+the archive is damaged — and "no such member" is not a failure at all, just an
+answer.
 
 **`-f` and `-o`.** `-f` may be given more than once to read several archives in
 one run; with none given, standard input is read. `-o` redirects the report; warnings about damaged
@@ -212,6 +217,87 @@ character of the mode string comes from the member's *type* rather than from
 the mode word, because a tar header stores no type bits — a directory whose
 type character came from the mode would print as a plain file. A device node
 shows its major and minor numbers where a file shows its size, as `ls` does.
+
+### `-m`, finding a member
+
+```console
+$ tmd -f backup.tar -m nginx.conf
+-rw-r--r--  root/root    2481  2026-03-01 09:14:00Z  etc/nginx/nginx.conf   @1536
+-rw-r--r--  root/root    2604  2026-09-15 11:02:31Z  etc/nginx/nginx.conf   @884736
+```
+
+`-m` / `--match` takes an fnmatch(3) glob and follows find(1)'s rule, which is
+the one everybody already knows:
+
+| pattern | matches |
+|---|---|
+| `nginx.conf` | any member whose **basename** is exactly that, at any depth |
+| `*.conf` | any member whose basename ends in `.conf` |
+| `etc/nginx/*` | contains a `/`, so it matches against the **full stored path** |
+| `*/logs/*` | likewise |
+
+Case-sensitive, because a tar path is a string of bytes and two members
+differing only in case are two different members. Repeatable: `-m a.conf -m
+b.conf` reports members matching either.
+
+**Every occurrence, not the first.** That is the reason this is in tmd rather
+than `tar -t | grep`. An archive can legitimately hold the same path twice —
+`tar -r` appends, an incremental backup re-adds a changed file, a concatenated
+archive carries two whole copies — and extraction silently keeps the last one.
+The two lines above are the same path at two offsets: the second is what you
+get if you extract, and the first is the one you would never otherwise know was
+there.
+
+The `@offset` is the one thing `-m` adds to a line; everything else about the
+listing is unchanged. `-l` and the machine formats already carry the offset.
+
+It composes. `-l` prints a full block per match, `-t JSON` emits only matching
+entries, `-t CSV` only matching rows, and it works on a pipe, because matching
+needs the path and nothing has to be buffered.
+
+The **summary keeps describing the whole archive** — format, blocking and
+integrity are properties of the file and do not change because a pattern was
+supplied — with one line added:
+
+```console
+$ tmd -f backup.tar -m '*.conf' -S | grep matched
+  matched       2 of 562 members
+```
+
+**Exit status 4** means the archive was read and nothing matched, which is its
+own answer and not to be confused with `1` (could not read it) or `3` (`--check`
+found damage):
+
+```console
+$ tmd -f backup.tar -m secrets.env || echo "not in this archive"
+not in this archive
+```
+
+### `--sort`, ordering the listing
+
+```console
+$ tmd -f backup.tar --sort=size --reverse | head -3
+-rw-r--r--  root/root  40140288  2026-09-15 11:02:31Z  var/lib/db/store.sqlite
+-rw-r--r--  root/root   2104320  2026-09-15 10:58:02Z  var/log/app.log
+-rw-r--r--  root/root    884736  2026-03-01 09:14:00Z  usr/share/data.bin
+```
+
+`--sort=KEY` takes `path`, `size`, `mtime` or `offset`, and `--reverse` inverts
+it. It answers "what is actually big in here" without a pipeline.
+
+Two things worth knowing:
+
+- **It reads the whole archive before printing anything.** The last member of an
+  archive can sort first, so nothing can be written until everything has been
+  read. This is the one place tmd stops streaming, which is why it is opt-in and
+  why a run holding more than 100,000 members says so on stderr.
+- **Ties keep the archive's own order.** Two members of the same size come out
+  in the order they appear in the file, and `--reverse` does not invert that —
+  it reverses the key, not the fallback. So the output is reproducible and a
+  listing can be diffed against itself.
+
+`-m` and `--sort` compose in the obvious direction: filter first, then order
+what survived.
 
 ### Timestamps are UTC, and say so
 
@@ -573,9 +659,10 @@ Run `make` with no arguments for the full list. The ones you will use:
 |---|---|
 | `make build` | compile into `./bin`, regenerating the manpage if needed |
 | `make test` | unit + end-to-end tests, sanitizers, and the coverage gate |
-| `make lint` | the compiler with `-Werror`, `-fanalyzer`, cppcheck, clang-tidy, shellcheck, the copyright audit and the manpage freshness check |
+| `make lint` | the compiler with `-Werror`, `-fanalyzer`, cppcheck, clang-tidy, shellcheck, the copyright audit, and the manpage and README freshness checks |
 | `make security` | the security scanners, locally |
 | `make man` | force the manpage to be regenerated from `--help` |
+| `make docs` | regenerate the manpage **and** the README's Usage block |
 | `make coverage` | measure coverage and refresh the README badge |
 | `make install` | build the installable `.deb` |
 | `make install-tree` | staged install into `DESTDIR` (what the package build uses) |
@@ -583,14 +670,21 @@ Run `make` with no arguments for the full list. The ones you will use:
 | `make install-dev` | install every tool the above wants, so nothing skips |
 | `make clean` | remove every intermediate file |
 
-### The manpage cannot go stale
+### The documented options cannot go stale
 
-`man/tmd.1` is generated from the program's own `--help`, which is itself
-generated from `src/options.def` — one table that produces the `getopt_long`
-array, the short option string and the help text. Adding an option updates all
-four together. `make build` regenerates the page when it is out of date,
-`make lint` fails if the committed copy does not match, and CI runs that check
-on every pull request.
+`man/tmd.1` and the [Usage](#usage) block above are both generated from the
+program's own `--help`, which is itself generated from `src/options.def` — one
+table that produces the `getopt_long` array, the short option string and the
+help text. Adding an option updates all five together.
+
+`make build` regenerates the manpage when it is out of date, `make docs`
+refreshes both, `make lint` fails if either committed copy does not match, and
+CI runs that check on every pull request.
+
+The README was the one that proved this necessary. Its option list was pasted
+by hand and checked by nobody, and it went on presenting `--format` as the only
+way to choose an output type for a whole release after `-t` existed. Three
+copies of one list is fine; two of them being generated is what makes it fine.
 
 ### The git hooks
 

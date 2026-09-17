@@ -54,8 +54,9 @@ static void read_all(struct readback *rb, const struct tarbuild *tb)
     memset(rb, 0, sizeof(*rb));
     rb->src = tmd_source_open_memory(tb->buf.data, tb->buf.len, "(test)");
     rb->reader = tmd_reader_new(rb->src);
-    while ((rc = tmd_reader_next(rb->reader, &e)) == 1)
+    while ((rc = tmd_reader_next(rb->reader, &e)) == 1) {
         keep(rb, e);
+    }
     rb->last_rc = rc;
 }
 
@@ -213,8 +214,9 @@ static void test_star_and_gnu_detection(void)
     tb_end(&tb);
     read_all(&rb, &tb);
     CHECK_INT(rb.count, 1);
-    if (rb.count == 1)
+    if (rb.count == 1) {
         CHECK_INT(rb.entries[0].format, TMD_FMT_STAR);
+    }
     CHECK_STR(tmd_reader_archive(rb.reader)->writer, "star");
     read_free(&rb);
     tb_free(&tb);
@@ -365,8 +367,9 @@ static void test_base256_size(void)
 
     read_all(&rb, &tb);
     CHECK_INT(rb.count, 1);
-    if (rb.count == 1)
+    if (rb.count == 1) {
         CHECK_INT(rb.entries[0].size, 0x300000000ULL);
+    }
     read_free(&rb);
     tb_free(&tb);
 }
@@ -401,8 +404,9 @@ static void test_damage(void)
     CHECK_INT(rc, 1);
     CHECK(!e->chksum_ok);
     CHECK_INT(e->nwarnings, 1);
-    if (e->nwarnings)
+    if (e->nwarnings) {
         CHECK_CONTAINS(e->warnings[0].text, "checksum mismatch");
+    }
     tmd_reader_free(reader);
     tmd_source_close(src);
     tb_free(&tb);
@@ -422,8 +426,9 @@ static void test_damage(void)
     (void)tmd_reader_next(reader, &e);
     (void)tmd_reader_next(reader, &e);
     CHECK(!e->chksum_ok);
-    if (e->nwarnings)
+    if (e->nwarnings) {
         CHECK_CONTAINS(e->warnings[0].text, "not octal");
+    }
     tmd_reader_free(reader);
     tmd_source_close(src);
     tb_free(&tb);
@@ -477,8 +482,9 @@ static void test_damage(void)
     CHECK_INT(rb.count, 1);
     CHECK(!tmd_reader_archive(rb.reader)->eof_marker);
     CHECK_INT(tmd_reader_archive(rb.reader)->nwarnings, 1);
-    if (tmd_reader_archive(rb.reader)->nwarnings)
+    if (tmd_reader_archive(rb.reader)->nwarnings) {
         CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0].text, "end-of-archive");
+    }
     read_free(&rb);
     tb_free(&tb);
 
@@ -493,8 +499,9 @@ static void test_damage(void)
     tb_raw(&tb, "only a little data", 18);
     read_all(&rb, &tb);
     CHECK_INT(rb.count, 1);
-    if (rb.count == 1)
+    if (rb.count == 1) {
         CHECK_INT(rb.entries[0].nwarnings, 1);
+    }
     read_free(&rb);
     tb_free(&tb);
 
@@ -518,8 +525,9 @@ static void test_damage(void)
     tb_end(&tb);
     read_all(&rb, &tb);
     CHECK_INT(rb.count, 2);
-    if (rb.count == 2)
+    if (rb.count == 2) {
         CHECK_STR(rb.entries[1].path, "second.txt");
+    }
     CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0].text, "not an end marker");
     read_free(&rb);
     tb_free(&tb);

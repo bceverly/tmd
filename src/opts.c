@@ -16,6 +16,8 @@
  * collide with a character. */
 enum {
     OPT_FORMAT = 1000,
+    OPT_SORT,
+    OPT_REVERSE,
     OPT_COLOR
 };
 
@@ -68,17 +70,19 @@ static const char *short_options(void)
     size_t      i;
     size_t      n = 0;
 
-    if (buf[0] != '\0')
+    if (buf[0] != '\0') {
         return buf;
+    }
 
     buf[n++] = '+';
     for (i = 0; i < N_OPTS; i++) {
-        if (opt_docs[i].code <= 0 || opt_docs[i].code > 255)
+        if (opt_docs[i].code <= 0 || opt_docs[i].code > 255) {
             continue;
+        }
         buf[n++] = (char)opt_docs[i].code;
-        if (opt_docs[i].arg == required_argument)
+        if (opt_docs[i].arg == required_argument) {
             buf[n++] = ':';
-        else if (opt_docs[i].arg == optional_argument) {
+        } else if (opt_docs[i].arg == optional_argument) {
             buf[n++] = ':';
             buf[n++] = ':';
         }
@@ -143,17 +147,19 @@ void tmd_print_usage(FILE *out)
          * property of the data rather than of the code.
          */
         tmd_buf_init(&left);
-        if (o->code > 0 && o->code <= 255)
+        if (o->code > 0 && o->code <= 255) {
             tmd_buf_addf(&left, "-%c, ", o->code);
-        else
+        } else {
             tmd_buf_addstr(&left, "    ");
+        }
 
-        if (o->arg == required_argument)
+        if (o->arg == required_argument) {
             tmd_buf_addf(&left, "--%s=%s", o->name, o->argname);
-        else if (o->arg == optional_argument)
+        } else if (o->arg == optional_argument) {
             tmd_buf_addf(&left, "--%s[=%s]", o->name, o->argname);
-        else
+        } else {
             tmd_buf_addf(&left, "--%s", o->name);
+        }
 
         (void)fprintf(out, "  %-24s %s\n", left.data, o->help);
         tmd_buf_free(&left);
@@ -165,6 +171,8 @@ void tmd_print_usage(FILE *out)
     (void)fprintf(out, "  %-24s %s\n", "2", "the command line was wrong");
     (void)fprintf(out, "  %-24s %s\n", "3",
                   "--check found damage: a bad checksum or a truncated archive");
+    (void)fprintf(out, "  %-24s %s\n", "4",
+                  "--match was given and no member matched");
 
     (void)fprintf(out, "\nExamples:\n");
     (void)fprintf(out, "  %-38s %s\n", "tmd -f archive.tar",
@@ -208,6 +216,30 @@ static int bad_usage(const char *fmt, ...)
 /*
  * TXT/JSON/CSV in any case, plus "text" for the name --format has always used.
  */
+static bool parse_sort_key(const char *s, enum tmd_sort *out)
+{
+    static const struct {
+        const char   *name;
+        enum tmd_sort value;
+    } keys[] = {
+        { "path",   TMD_SORT_PATH   },
+        { "name",   TMD_SORT_PATH   }, /* what somebody types first */
+        { "size",   TMD_SORT_SIZE   },
+        { "mtime",  TMD_SORT_MTIME  },
+        { "time",   TMD_SORT_MTIME  },
+        { "offset", TMD_SORT_OFFSET },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(keys) / sizeof(*keys); i++) {
+        if (strcmp(s, keys[i].name) == 0) {
+            *out = keys[i].value;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool parse_output_type(const char *s, enum tmd_output *out)
 {
     static const struct {
@@ -319,6 +351,27 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         case 'q':
             cli->options.quiet = true;
             break;
+        case 'm':
+            /*
+             * Repeatable, so the patterns accumulate. Bounded by argc for the
+             * same reason the file list is: one -m cannot appear more times
+             * than there are arguments.
+             */
+            if (!cli->options.match) {
+                cli->options.match = tmd_xcalloc((size_t)argc,
+                                                 sizeof(*cli->options.match));
+            }
+            cli->options.match[cli->options.nmatch++] = optarg;
+            break;
+        case OPT_SORT:
+            if (!parse_sort_key(optarg, &cli->options.sort)) {
+                return bad_usage("unknown sort key \"%s\" — expected "
+                                 "path, size, mtime or offset", optarg);
+            }
+            break;
+        case OPT_REVERSE:
+            cli->options.reverse = true;
+            break;
         case 't':
         case OPT_FORMAT:
             /*
@@ -329,17 +382,19 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
              * actually writes them. Both accept either case, because insisting
              * on one would be a rule with nothing behind it.
              */
-            if (!parse_output_type(optarg, &cli->options.output))
+            if (!parse_output_type(optarg, &cli->options.output)) {
                 return bad_usage("unknown output type \"%s\" — expected "
                                  "TXT, JSON or CSV", optarg);
+            }
             break;
         case OPT_COLOR:
             color_when = optarg ? optarg : "always";
             if (strcmp(color_when, "auto") != 0 &&
                 strcmp(color_when, "always") != 0 &&
-                strcmp(color_when, "never") != 0)
+                strcmp(color_when, "never") != 0) {
                 return bad_usage("unknown --color value \"%s\" — expected auto, always or never",
                                  color_when);
+                }
             break;
         case 'h':
             cli->want_help = true;
@@ -353,10 +408,11 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         }
     }
 
-    if (optind < argc)
+    if (optind < argc) {
         return bad_usage("unexpected argument \"%s\" — the archive is named with -f "
                          "(did you mean: tmd -f %s?)",
                          argv[optind], argv[optind]);
+    }
 
     if (cli->nfiles == 0) {
         /*
@@ -368,9 +424,10 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
          * `-f -` still means the same thing and is worth keeping for scripts
          * that would rather be explicit.
          */
-        if (isatty(STDIN_FILENO))
+        if (isatty(STDIN_FILENO)) {
             return bad_usage("no archive given — use -f FILE, or pipe one in "
                              "(gzip -dc a.tar.gz | tmd)");
+        }
         cli->files[cli->nfiles++] = "-";
     }
 
@@ -379,21 +436,23 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
      * decision needs the destination: with -o the output is a file, and a file
      * full of escape sequences is a file nobody can grep.
      */
-    if (strcmp(color_when, "always") == 0)
+    if (strcmp(color_when, "always") == 0) {
         cli->options.color = true;
-    else if (strcmp(color_when, "never") == 0)
+    } else if (strcmp(color_when, "never") == 0) {
         cli->options.color = false;
-    else
+    } else {
         cli->options.color = !cli->output_path && isatty(STDOUT_FILENO) &&
                              /* Only tested for presence: the value is never
                               * read, copied or parsed, so its length and
                               * contents cannot matter. */
                              getenv("NO_COLOR") == NULL; /* Flawfinder: ignore */
+    }
 
     /* JSON and CSV are for machines; an escape sequence in the middle of a
      * string is not something a parser is expected to cope with. */
-    if (cli->options.output != TMD_OUT_TEXT)
+    if (cli->options.output != TMD_OUT_TEXT) {
         cli->options.color = false;
+    }
 
     return TMD_EXIT_OK;
 }
@@ -403,4 +462,9 @@ void tmd_free_args(struct tmd_cli *cli)
     free(cli->files);
     cli->files = NULL;
     cli->nfiles = 0;
+    /* Only the array. Each pattern is an argv string, which this program does
+     * not own. */
+    free((void *)cli->options.match);
+    cli->options.match = NULL;
+    cli->options.nmatch = 0;
 }
