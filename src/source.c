@@ -429,11 +429,23 @@ const char *tmd_source_codec(const struct tmd_source *s)
 
 bool tmd_source_codec_failed(const struct tmd_source *s)
 {
+    /*
+     * Copied out of the struct before being asked about, because W* are macros
+     * and Darwin's spell themselves `(*(int *)&(w))` -- a cast through a
+     * pointer, to convert the historical `union wait`. Handed a const lvalue
+     * that casts away const, which -Wcast-qual rejects and rightly so: the
+     * warning cannot tell a header's own cast from ours. glibc's version does
+     * not do this, so it only ever appeared on macOS. A local int is an lvalue
+     * the macro can take the address of and is not const, which costs one
+     * register and settles it everywhere.
+     */
+    int status = s->codec_status;
+
     if (!s->codec_reaped)
     {
         return false; /* the stream never ended; the reader reports its own */
     }
-    return !WIFEXITED(s->codec_status) || WEXITSTATUS(s->codec_status) != 0;
+    return !WIFEXITED(status) || WEXITSTATUS(status) != 0;
 }
 
 size_t tmd_source_read(struct tmd_source *s, void *buf, size_t n)

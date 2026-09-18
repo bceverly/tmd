@@ -207,8 +207,21 @@ info "Tagging $TAG…"
 git tag -a "$TAG" -m "Release $TAG" || die "Could not create tag $TAG."
 ok "Created tag $TAG."
 
+# TMD_SKIP_HOOK=1, and this is the one place it is honest.
+#
+# A release does two pushes -- the branch, then the tag -- and git runs the
+# pre-push hook on each. That hook runs the whole test suite: both suites, the
+# sanitizers, valgrind and the coverage gate, which re-runs both suites again.
+# The branch push above just did all of it. The tag points at the commit that
+# push published, nothing has been touched since, and the hook tests the working
+# tree rather than the ref being pushed -- so the second run reads the same
+# bytes and can only reach the same answer, several minutes later.
+#
+# Skipping it is not skipping the check; the check ran, on this tree, moments
+# ago. If the branch push had failed its hook, the die above means execution
+# never got here.
 info "Pushing tag $TAG…"
-if ! git push origin "$TAG"; then
+if ! TMD_SKIP_HOOK=1 git push origin "$TAG"; then
   # Leave the local tag in place so it can be retried or inspected.
   die "Could not push the tag. The local tag $TAG still exists; delete it with
        'git tag -d $TAG' if you want to start over."
