@@ -30,8 +30,9 @@ asked of a roadmap a year later.
 | [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
 | [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600) | **aarch64 shipped** in v1.6.0.0; [big-endian declined](#a-big-endian-ci-leg) |
+| [Build and test on macOS and the BSDs](#build-and-test-on-macos-and-the-bsds--the-macos-half-v1602) | **macOS shipped** in v1.6.0.2; the three BSDs open |
 
-Nothing open. Twelve shipped, one declined.
+One open: the BSD half of the newest item. Thirteen shipped, one declined.
 
 The roadmap has been worked through. New ideas go under
 [Other ideas](#other-ideas); anything decided against goes to
@@ -44,7 +45,10 @@ with three items that added no switch but did add JSON keys, because a minor
 version is the unit being spent either way. v1.6.0.0 adds no switch at all:
 compressed archives are recognized by content, so nothing new had to be typed —
 but it changes what `tmd -f a.tar.gz` *does*, and adds a runtime dependency the
-package declares, which is more than a patch should carry.
+package declares, which is more than a patch should carry. v1.6.0.2 stays on the
+patch digit by the same rule read the other way: a new CI leg and a build that
+works out its own link flags change nothing a user types and nothing a user
+gets — the Linux binary is byte for byte what it was.
 
 ---
 
@@ -118,6 +122,42 @@ more and belongs in a scheduled job rather than on every push, so it stays open.
 The job asserts `uname -m` is aarch64 before doing anything else: a runner label
 that silently fell back to x86 would leave this reporting success while testing
 nothing.
+
+### Build and test on macOS and the BSDs — the macOS half (v1.6.0.2)
+
+**What shipped:** a `Tests (macOS)` job on GitHub's native macOS runners —
+build, `-Werror` build, both suites, a staged `make install`, and reading a real
+`.tar.gz` from a file and from a pipe — plus the portability work that job
+needed, and a from-source section in the README for it.
+
+**Two things about the build were true only on Linux, and nothing said so.**
+
+- The link hardening. `-Wl,-z,relro`, `-z now` and `-z noexecstack` are ELF
+  concepts; Apple's linker rejects `-z` outright. They are now *probed* by
+  linking a one-line program, so they are passed where they mean something and
+  dropped where they do not.
+- `-D_XOPEN_SOURCE=700`. Asking libc for strict POSIX also switches off the
+  namespace Darwin declares `getopt_long` in — the one function here POSIX does
+  not define. `-D_DARWIN_C_SOURCE` restores it there, and the BSDs, which put
+  `getopt_long` outside POSIX too, do not get `_XOPEN_SOURCE` at all.
+
+Neither could be checked without a Mac, which is why the job is the deliverable
+rather than the flags.
+
+**The end-to-end suite had Linux assumptions of its own,** and they were the
+larger share of the work: `tar` meaning GNU tar, `stat -c`, `date -d @SECONDS`,
+and `script -qec`. Each is now detected once at the top of the suite and used
+through a small function, so the same script runs on GNU and BSD userlands
+without a fork. GNU tar arrives from Homebrew as `gtar`; bsdtar needs no
+installing on macOS, because there it *is* the system `tar`, so the BSD-writer
+half of the suite runs natively rather than being skipped.
+
+**The three BSDs stay open.** GitHub has no FreeBSD, NetBSD or OpenBSD runners,
+so those legs mean `vmactions/*-vm` — a qemu VM started per job, the repository
+rsynced in, and the build run inside. That is a different kind of cost from a
+native runner and a different kind of failure to debug, and it is worth doing
+only once the portability work above is known to hold somewhere that is not
+Linux. macOS was the cheap way to find that out.
 
 ### `--diff` between two archives (v1.5.0.0)
 

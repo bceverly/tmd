@@ -163,6 +163,91 @@ jobs:
         run: make test-cli
 
   # ==========================================================================
+  # macOS, on a native runner.
+  #
+  # The first non-Linux system this builds on, and the cheapest way to find out
+  # whether it can: no emulation, no VM, and it exercises both of the things
+  # that were only ever assumed to work.
+  #
+  #   The linker flags. -Wl,-z,relro and friends are ELF concepts and Apple's
+  #   linker rejects -z outright, so they are probed now rather than hardcoded.
+  #
+  #   The feature-test macros. _XOPEN_SOURCE=700 asks for strict POSIX, which on
+  #   Darwin also switches off the namespace where getopt_long is declared --
+  #   the one function here that POSIX does not define. -D_DARWIN_C_SOURCE keeps
+  #   it visible.
+  #
+  # Neither could be checked without a Mac, so this job IS the check.
+  #
+  # Lint, coverage and the memory suite stay on Linux: the analyzers differ by
+  # version, and one coverage gate arguing with itself per platform helps
+  # nobody.
+  macos:
+    name: Tests (macOS)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # GNU tar builds the fixtures: --format=gnu and --no-recursion are GNU
+      # spellings, and the system tar here is bsdtar. It arrives as `gtar`,
+      # which the suite looks for. bsdtar itself needs no installing -- it IS
+      # the system tar, so the BSD-writer tests run natively rather than being
+      # skipped as they are on a Linux box without libarchive-tools.
+      - name: Install GNU tar and the decompressors
+        run: brew install gnu-tar xz zstd
+
+      - name: Say what this actually is
+        # Printed rather than assumed: if a runner image ever changes its
+        # compiler or its bash, this is the line that explains the next failure.
+        run: |
+          uname -srm
+          cc --version | head -1
+          make --version | head -1
+          bash --version | head -1
+          gtar --version | head -1
+          tar --version | head -1
+
+      - name: make build
+        run: make build
+
+      - name: Build again with -Werror
+        run: make clean && make build WERROR=-Werror
+
+      - name: make test-unit
+        run: make test-unit
+
+      - name: make test-cli
+        run: make test-cli
+
+      # The from-source install, staged so it needs no privileges. stat is
+      # spelled -f here, not -c; that difference is the whole reason this job
+      # cannot just reuse the Linux one.
+      - name: make install, staged
+        run: |
+          make install DESTDIR="$PWD/staged" prefix=/usr/local
+          test -x staged/usr/local/bin/tmd
+          test -f staged/usr/local/share/man/man1/tmd.1
+          test "$(stat -f '%Lp' staged/usr/local/bin/tmd)" = 755
+          test "$(stat -f '%Lp' staged/usr/local/share/man/man1/tmd.1)" = 644
+          rm -rf staged
+
+      # The binary the whole job exists to produce, doing its job: a real
+      # archive, read through the decompressor tmd spawns, from a file and from
+      # a pipe. The unit and CLI suites cover this already -- what they cannot
+      # cover is whether spawning gzip works on a system whose gzip is not GNU's.
+      - name: Read a real compressed archive
+        run: |
+          mkdir -p t/sub && echo hello > t/a.txt && ln -s a.txt t/link
+          gtar -czf t.tar.gz t
+          ./bin/tmd -f t.tar.gz
+          ./bin/tmd -f t.tar.gz -i | grep -Eq 'compression +gzip'
+          ./bin/tmd < t.tar.gz > /dev/null
+          rm -rf t t.tar.gz
+
+  # ==========================================================================
   # Separate from `test` because it is slow and because its failures are of a
   # different kind: not "the answer is wrong" but "the program did something it
   # is not allowed to do".

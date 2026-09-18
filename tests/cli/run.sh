@@ -81,6 +81,84 @@ cd "$WORK" || exit 1
 printf '\ntmd end-to-end tests\n'
 
 # ---------------------------------------------------------------------------
+# Portability
+#
+# The fixtures are built with the real tar and inspected with the system's own
+# tools, and every one of those differs between GNU userland and BSD userland
+# (macOS included). Named once here rather than at each of the thirty-odd
+# places that would otherwise have to care.
+# ---------------------------------------------------------------------------
+
+# GNU tar, which the fixtures genuinely need: --format=gnu/v7/ustar/posix and
+# --no-recursion are GNU spellings, and the archives they produce are the
+# reference this suite checks tmd against. On macOS and the BSDs `tar` IS
+# bsdtar, and GNU tar is a package installed as `gtar`.
+if command -v gtar > /dev/null 2>&1 && gtar --version 2>&1 | grep -q 'GNU tar'; then
+  TAR=gtar
+elif tar --version 2>&1 | grep -q 'GNU tar'; then
+  TAR=tar
+else
+  printf '\033[91mrun.sh: GNU tar is required to build the fixtures\033[0m\n' >&2
+  printf '  macOS:   brew install gnu-tar\n' >&2
+  printf '  FreeBSD: pkg install gtar\n' >&2
+  printf '  NetBSD:  pkgin install gtar\n' >&2
+  printf '  OpenBSD: pkg_add gtar\n' >&2
+  exit 1
+fi
+
+# bsdtar, which half the format tests exist to read. Present under its own name
+# on Linux (libarchive-tools); on macOS and the BSDs it is the system tar, so
+# looking only for a command called "bsdtar" skipped those tests on the very
+# systems where bsdtar is native.
+if command -v bsdtar > /dev/null 2>&1; then
+  BSDTAR=bsdtar
+  HAVE_BSDTAR=1
+elif tar --version 2>&1 | grep -qi 'bsdtar\|libarchive'; then
+  BSDTAR=tar
+  HAVE_BSDTAR=1
+else
+  BSDTAR=
+  HAVE_BSDTAR=0
+fi
+
+# The permission bits of a file, as octal. GNU stat spells it -c %a, BSD -f %Lp.
+if stat -c %a . > /dev/null 2>&1; then
+  file_mode() { stat -c %a "$1"; }
+else
+  file_mode() { stat -f %Lp "$1"; }
+fi
+
+# Set a file's mtime from a Unix epoch.
+#
+# GNU touch takes -d @EPOCH and BSD touch does not, but both take
+# -t CCYYMMDDhhmm.SS -- so the epoch is converted first, with a date(1) that is
+# itself spelled differently: GNU wants -d @N, BSD wants -r N. The probe uses
+# the fact that GNU's -r takes a FILE, so `date -r 0` fails there and succeeds
+# on BSD.
+# Deliberately NOT date -u: `touch -t` reads its stamp as LOCAL time, so the
+# conversion has to be local too or the mtime lands an offset away. Written with
+# -u first, which round-tripped perfectly on a UTC machine and would have been
+# five hours out for anyone else.
+if date -r 0 '+%Y' > /dev/null 2>&1; then
+  epoch_stamp() { date -r "$1" '+%Y%m%d%H%M.%S'; }
+else
+  epoch_stamp() { date -d "@$1" '+%Y%m%d%H%M.%S'; }
+fi
+touch_epoch() {
+  _stamp="$(epoch_stamp "$1")"
+  shift
+  touch -t "$_stamp" "$@"
+}
+
+# script(1), for the one check that needs a real terminal. util-linux spells it
+# `script -qec CMD FILE`; the BSD and macOS one is `script -q FILE CMD`.
+if script --version > /dev/null 2>&1; then
+  tty_run() { script -qec "$1" /dev/null < /dev/null 2>/dev/null; }
+else
+  tty_run() { script -q /dev/null "$1" < /dev/null 2>/dev/null; }
+fi
+
+# ---------------------------------------------------------------------------
 # A tree with one of everything a tar header can describe.
 #
 # umask is set first, so that the permission bits the fixtures end up with are
@@ -97,15 +175,13 @@ ln -s ../hello.txt tree/sub/link
 ln tree/hello.txt tree/hardlink
 chmod 755 tree/sub/deep
 chmod 4755 tree/sub/big.bin
-touch -d "2021-03-04 05:06:07" tree/hello.txt
+touch -t 202103040506.07 tree/hello.txt
 
 # A path too long for a ustar header, so the long-name machinery is exercised.
 LONG="tree/$(printf 'a%.0s' $(seq 1 95))/$(printf 'b%.0s' $(seq 1 95))"
 mkdir -p "$LONG"
 echo "deep" > "$LONG/file.txt"
 
-HAVE_BSDTAR=0
-command -v bsdtar > /dev/null 2>&1 && HAVE_BSDTAR=1
 
 # ---------------------------------------------------------------------------
 printf '\n\033[1;94m▸ reading what the real tools write\033[0m\n'
@@ -118,7 +194,7 @@ for format in gnu ustar posix v7; do
     *)          source_tree="tree" ;;
   esac
   # shellcheck disable=SC2086  # the tree list is deliberately word-split
-  if ! tar --format="$format" -cf "$archive" $source_tree 2>/dev/null; then
+  if ! "$TAR" --format="$format" -cf "$archive" $source_tree 2>/dev/null; then
     note "skipping $format: this tar cannot write it"
     continue
   fi
@@ -131,7 +207,7 @@ for format in gnu ustar posix v7; do
   # The real check: tmd and tar must agree about every member, in order.
   # Fields are compared rather than whole lines, because the two pad their
   # columns differently and that is not a difference worth failing on.
-  tar_view="$(tar -tvf "$archive" 2>/dev/null \
+  tar_view="$("$TAR" -tvf "$archive" 2>/dev/null \
               | awk '{ printf "%s %s %s %s\n", $1, $2, $3, $NF }')"
   tmd_view="$("$TMD" -f "$archive" 2>/dev/null \
               | awk '{ printf "%s %s %s %s\n", $1, $2, $3, $NF }')"
@@ -144,17 +220,17 @@ for format in gnu ustar posix v7; do
 done
 
 if [ "$HAVE_BSDTAR" -eq 1 ]; then
-  bsdtar -cf bsd.tar tree 2>/dev/null
+  "$BSDTAR" -cf bsd.tar tree 2>/dev/null
   out="$("$TMD" -f bsd.tar -s 2>/dev/null)"
   check_contains "bsdtar: recognized as pax" "$out" "POSIX pax"
   check_contains "bsdtar: long path read from the pax header" \
                  "$("$TMD" -f bsd.tar 2>/dev/null)" "$LONG/file.txt"
 
-  bsdtar --format=ustar -cf bsdustar.tar tree/hello.txt 2>/dev/null
+  "$BSDTAR" --format=ustar -cf bsdustar.tar tree/hello.txt 2>/dev/null
   check_contains "bsdtar ustar: recognized as ustar" \
                  "$("$TMD" -f bsdustar.tar -s 2>/dev/null)" "POSIX ustar"
 else
-  note "bsdtar is not installed — the BSD-writer tests are skipped"
+  note "no bsdtar (libarchive) here — the BSD-writer tests are skipped"
 fi
 
 # ---------------------------------------------------------------------------
@@ -203,12 +279,12 @@ printf '\n\033[1;94m▸ sparse files\033[0m\n'
 # 10 MB of nothing: the archive should be a few kilobytes, and the listing
 # should still report the size the file expands to.
 dd if=/dev/zero of=tree/sparse.bin bs=1 count=0 seek=10000000 2>/dev/null
-if tar --sparse -cf sparse-gnu.tar tree/sparse.bin 2>/dev/null; then
+if "$TAR" --sparse -cf sparse-gnu.tar tree/sparse.bin 2>/dev/null; then
   out="$("$TMD" -f sparse-gnu.tar -l 2>/dev/null)"
   check_contains "GNU sparse: the expanded size is reported" "$out" "10000000 bytes"
   check_contains "GNU sparse: the member is marked sparse" "$out" "sparse "
 fi
-if tar --format=posix --sparse -cf sparse-pax.tar tree/sparse.bin 2>/dev/null; then
+if "$TAR" --format=posix --sparse -cf sparse-pax.tar tree/sparse.bin 2>/dev/null; then
   out="$("$TMD" -f sparse-pax.tar -l 2>/dev/null)"
   check_contains "pax sparse 1.0: the expanded size is reported" "$out" "10000000 bytes"
   check_contains "pax sparse 1.0: the real name is recovered" "$out" "tree/sparse.bin"
@@ -288,7 +364,7 @@ check_contains "the summary still counts every member" "$out" "members"
 # you both.
 cp gnu.tar dup.tar
 echo "a replacement, longer than the original" > tree/hello.txt
-tar --format=gnu -rf dup.tar tree/hello.txt 2>/dev/null
+"$TAR" --format=gnu -rf dup.tar tree/hello.txt 2>/dev/null
 dups="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -c 'tree/hello.txt')"
 check "both copies of a duplicated path are reported" "$dups" "2"
 offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sort -u | wc -l)"
@@ -303,7 +379,7 @@ printf '\n\033[1;94m▸ compressed archives\033[0m\n'
 # The control is an UNCOMPRESSED archive of the same tree, written by the same
 # tar. Comparing against the gnu.tar fixture instead compared two different sets
 # of members, which is what the first version of this did.
-tar -cf plainctl.tar tree 2>/dev/null
+"$TAR" -cf plainctl.tar tree 2>/dev/null
 plain="$("$TMD" -f plainctl.tar 2>/dev/null)"
 
 for spec in "gz:gzip:-z" "xz:xz:-J" "bz2:bzip2:-j" "zst:zstd:--zstd"; do
@@ -316,7 +392,7 @@ for spec in "gz:gzip:-z" "xz:xz:-J" "bz2:bzip2:-j" "zst:zstd:--zstd"; do
     note "$tool is not installed — skipping .tar.$ext"
     continue
   fi
-  if ! tar "$flag" -cf "c.tar.$ext" tree 2>/dev/null; then
+  if ! "$TAR" "$flag" -cf "c.tar.$ext" tree 2>/dev/null; then
     note "this tar cannot write .tar.$ext — skipping"
     continue
   fi
@@ -362,7 +438,7 @@ check "a plain archive reports no compression" "$plain_codec" "0"
 
 # A decompressor that is not installed is a clear message, not an empty archive.
 if command -v gzip > /dev/null 2>&1; then
-  tar -z -cf missing.tar.gz tree 2>/dev/null
+  "$TAR" -z -cf missing.tar.gz tree 2>/dev/null
   err="$(PATH=/nonexistent "$TMD" -f missing.tar.gz 2>&1 >/dev/null || true)"
   check_contains "a missing decompressor says which tool is missing" "$err" \
                  "gzip is not installed"
@@ -371,7 +447,7 @@ fi
 # Corrupt compressed data must not be reported as a short but valid archive:
 # what came out is a prefix, and saying so is the whole point.
 if command -v gzip > /dev/null 2>&1; then
-  tar -z -cf trunc.tar.gz tree 2>/dev/null
+  "$TAR" -z -cf trunc.tar.gz tree 2>/dev/null
   head -c 120 trunc.tar.gz > cut.tar.gz
   "$TMD" -f cut.tar.gz > /dev/null 2>&1
   check_status "a truncated .tar.gz is an error, not a partial success" "$?" 1
@@ -396,15 +472,15 @@ echo "gone"          > dtree/removed.txt
 # use is a test that passes at home and fails on somebody else's runner --
 # which is exactly what it did.
 chmod 644 dtree/keep.txt
-touch -d "@1700000000" dtree/keep.txt dtree/changes.txt dtree/removed.txt dtree
-tar --format=gnu -cf old.tar dtree 2>/dev/null
+touch_epoch 1700000000 dtree/keep.txt dtree/changes.txt dtree/removed.txt dtree
+"$TAR" --format=gnu -cf old.tar dtree 2>/dev/null
 
 echo "a much longer replacement" > dtree/changes.txt
 rm dtree/removed.txt
 echo "new" > dtree/added.txt
 chmod 600 dtree/keep.txt
-touch -d "@1700000000" dtree/changes.txt dtree/added.txt dtree/keep.txt dtree
-tar --format=gnu -cf new.tar dtree 2>/dev/null
+touch_epoch 1700000000 dtree/changes.txt dtree/added.txt dtree/keep.txt dtree
+"$TAR" --format=gnu -cf new.tar dtree 2>/dev/null
 
 out="$("$TMD" -f old.tar -f new.tar --diff 2>/dev/null)"
 check_contains "--diff reports an added member" "$out" "+ dtree/added.txt"
@@ -489,14 +565,14 @@ check_contains "and what extracting would create" "$out" "top level"
 # An archive that unpacks many entries into the current directory — the older
 # meaning of "tar bomb", and a different question from a path that escapes.
 for i in 1 2 3 4 5 6 7 8 9 10; do echo x > "scatter$i.txt"; done
-tar --format=gnu -cf scatter.tar scatter*.txt 2>/dev/null
+"$TAR" --format=gnu -cf scatter.tar scatter*.txt 2>/dev/null
 out="$("$TMD" -f scatter.tar -i 2>/dev/null)"
 check_contains "many top-level entries are called out" "$out" \
                "scatters them into the current directory"
 
 # A file list carries no directory members, which a directory walk always does.
 find tree -type f | LC_ALL=C sort > flist.txt
-tar --format=gnu --no-recursion -cf flist.tar -T flist.txt 2>/dev/null
+"$TAR" --format=gnu --no-recursion -cf flist.tar -T flist.txt 2>/dev/null
 out="$("$TMD" -f flist.tar -i 2>/dev/null)"
 check_contains "no directory members reads as a file list" "$out" \
                "written from a list of files"
@@ -506,8 +582,8 @@ check_contains "no directory members reads as a file list" "$out" \
 # not tar's traversal.
 find tree | LC_ALL=C sort > asc.txt
 find tree | LC_ALL=C sort -r > desc.txt
-tar --format=gnu --no-recursion -cf asc.tar -T asc.txt 2>/dev/null
-tar --format=gnu --no-recursion -cf desc.tar -T desc.txt 2>/dev/null
+"$TAR" --format=gnu --no-recursion -cf asc.tar -T asc.txt 2>/dev/null
+"$TAR" --format=gnu --no-recursion -cf desc.tar -T desc.txt 2>/dev/null
 out="$("$TMD" -f asc.tar -i 2>/dev/null)"
 check_contains "a sorted archive is reported sorted" "$out" "lexicographic by path"
 out="$("$TMD" -f desc.tar -i 2>/dev/null)"
@@ -570,7 +646,7 @@ mkdir -p bomb/safe
 echo ok > bomb/safe/a.txt
 ln -sf /etc/passwd bomb/out-abs
 ln -sf ../../../outside bomb/out-rel
-tar --format=gnu -cf bomb.tar -C bomb safe out-abs out-rel 2>/dev/null
+"$TAR" --format=gnu -cf bomb.tar -C bomb safe out-abs out-rel 2>/dev/null
 
 err="$("$TMD" -f bomb.tar 2>&1 >/dev/null)"
 check_contains "a link out of the tree is reported by default" "$err" \
@@ -587,7 +663,7 @@ check_contains "a clean archive is stated to be clean" "$out" \
                "every member stays inside the extraction directory"
 
 # An absolute path is a different class from a traversal.
-tar -cPf abs.tar /etc/hostname 2>/dev/null || true
+"$TAR" -cPf abs.tar /etc/hostname 2>/dev/null || true
 if [ -f abs.tar ]; then
   err="$("$TMD" -f abs.tar 2>&1 >/dev/null)"
   check_contains "an absolute path is reported" "$err" "absolute path"
@@ -613,9 +689,9 @@ mkdir -p rel
 echo a > rel/one
 echo bb > rel/two
 echo ccc > rel/three
-touch -d "@1700000000" rel/one rel/two rel/three rel
-touch -d "@1700000120" rel/one
-tar --format=gnu -cf rel.tar rel 2>/dev/null
+touch_epoch 1700000000 rel/one rel/two rel/three rel
+touch_epoch 1700000120 rel/one
+"$TAR" --format=gnu -cf rel.tar rel 2>/dev/null
 
 out="$("$TMD" -f rel.tar --stat 2>/dev/null)"
 check_contains "--stat counts distinct timestamps, not members" "$out" "2 distinct"
@@ -634,8 +710,8 @@ else
 fi
 
 # One timestamp everywhere is a different finding from a spread.
-touch -d "@1700000000" rel/one rel/two rel/three rel
-tar --format=gnu -cf norm.tar rel 2>/dev/null
+touch_epoch 1700000000 rel/one rel/two rel/three rel
+"$TAR" --format=gnu -cf norm.tar rel 2>/dev/null
 out="$("$TMD" -f norm.tar --stat 2>/dev/null)"
 check_contains "one timestamp for everything reads as normalized" "$out" "normalized"
 check_contains "and the span says so plainly" "$out" "every member shares one second"
@@ -768,7 +844,7 @@ fi
 csv="$("$TMD" -f gnu.tar --format=csv 2>/dev/null)"
 check_contains "csv writes a header row" "$csv" "path,kind,mode_string"
 csv_rows=$(printf '%s\n' "$csv" | tail -n +2 | wc -l)
-tar_rows=$(tar -tf gnu.tar | wc -l)
+tar_rows=$("$TAR" -tf gnu.tar | wc -l)
 check "csv has one row per member" "$csv_rows" "$tar_rows"
 
 # ---------------------------------------------------------------------------
@@ -798,7 +874,7 @@ if command -v script > /dev/null 2>&1; then
   # list of refs being pushed, and this check compared the banner against
   # "refs/heads/main 1c44b07 ...". Feeding script an empty stdin stops the
   # echo; grepping the whole output means an echo could not fool it anyway.
-  tty_out="$(script -qec "$TMD" /dev/null < /dev/null 2>/dev/null)"
+  tty_out="$(tty_run "$TMD")"
   check_contains "a bare tmd at a terminal shows the usage" \
                  "$tty_out" "dump the metadata out of a tar archive"
 else
@@ -840,12 +916,12 @@ check_status "-o to an unwritable path fails" "$?" 1
 # nothing. CodeQL caught it; this keeps it caught.
 ( umask 000 && "$TMD" -f gnu.tar -o permissive.txt > /dev/null 2>&1 )
 check "-o creates the report 0644 even under umask 000" \
-      "$(stat -c %a permissive.txt 2>/dev/null)" "644"
+      "$(file_mode permissive.txt 2>/dev/null)" "644"
 
 # ...and a stricter umask is still honored, rather than forced back up to 644.
 ( umask 077 && "$TMD" -f gnu.tar -o strict.txt > /dev/null 2>&1 )
 check "-o honors a stricter umask" \
-      "$(stat -c %a strict.txt 2>/dev/null)" "600"
+      "$(file_mode strict.txt 2>/dev/null)" "600"
 
 # No -f at all: standard input is read when it is not a terminal.
 #

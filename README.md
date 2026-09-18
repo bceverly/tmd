@@ -929,6 +929,16 @@ big-endian leg would catch one and was
 multi-byte load in the program, so the property is true by construction, and an
 emulated leg runs too slowly to sit on every push.
 
+**Platforms.** Since v1.6.0.2 a `Tests (macOS)` job runs the whole thing on a
+native macOS runner: build, `-Werror` build, both suites, a staged `make
+install`, and reading a real `.tar.gz` from a file and from a pipe. It is there
+because two things about the build were true only on Linux and nothing said so —
+the ELF-only link hardening, and `_XOPEN_SOURCE=700` hiding `getopt_long` behind
+Darwin's strict-POSIX switch. Both are now decided by the Makefile at build
+time, and that job is what checks the decision. Lint, coverage and the memory
+suite stay on Linux: the analyzers differ by version, and one coverage gate
+arguing with itself per platform helps nobody.
+
 **End-to-end tests** do the opposite: they build archives with the real `tar`
 and `bsdtar`, in every format each can write, and check that `tmd`'s listing
 agrees with `tar -tvf` member by member. Then they check the things `tar` cannot
@@ -1170,6 +1180,55 @@ sudo make uninstall                  # or: make uninstall prefix=$HOME/.local
 **Build requirements** are a C11 compiler and `make`, and nothing else. The
 decompressors are optional and only needed for compressed archives — see
 [What it links, and what it runs](#what-it-links-and-what-it-runs).
+
+### From source on macOS
+
+The same three commands, and there is no fourth:
+
+```bash
+git clone https://github.com/bceverly/tmd.git
+cd tmd
+make build
+sudo make install
+```
+
+Apple's Command Line Tools supply everything the build needs — `clang` is a C11
+compiler and `make` is GNU make — so `xcode-select --install` is the only
+prerequisite, and on a machine that has ever built anything it is already done.
+Homebrew is not required to build, install or run tmd.
+
+Two things differ from Linux, and the Makefile works both out for itself:
+
+- **The hardening link flags.** `-Wl,-z,relro`, `-z now` and `-z noexecstack`
+  are ELF concepts, and Apple's linker rejects `-z` outright. They are probed by
+  linking a one-line program rather than hardcoded, so they are passed on ELF
+  systems and quietly dropped on Mach-O ones.
+- **The feature-test macros.** `-D_XOPEN_SOURCE=700` asks libc for strict POSIX.
+  On Darwin that also switches *off* the namespace that declares `getopt_long`,
+  which POSIX does not define and tmd uses. `-D_DARWIN_C_SOURCE` is added there
+  to keep it visible.
+
+A `Tests (macOS)` job on GitHub's native Apple-silicon runners builds, runs both
+suites and does a staged install on every push, so neither of those is a claim
+that goes unchecked.
+
+Homebrew matters only for two optional things:
+
+```bash
+brew install xz zstd     # to read .tar.xz and .tar.zst
+brew install gnu-tar     # only to run `make test-cli`
+```
+
+`gzip` and `bzip2` ship with macOS, so `.tar.gz` and `.tar.bz2` work on a stock
+system; `.tar.xz` and `.tar.zst` need the tools above, and tmd says which one is
+missing rather than guessing. The end-to-end suite builds its fixtures with GNU
+tar, for GNU spellings like `--format=gnu` and `--no-recursion` that the system
+`tar` — which is bsdtar — does not have; it finds Homebrew's copy as `gtar`. The
+BSD half of that suite needs nothing installed, because on macOS the system
+`tar` *is* bsdtar.
+
+The other BSDs are not yet covered by CI and are
+[on the roadmap](ROADMAP.md#build-and-test-on-macos-and-the-bsds--the-macos-half-v1602).
 
 ### Build the package yourself
 

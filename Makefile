@@ -48,7 +48,36 @@ CC          ?= cc
 CFLAGS      ?= -O2 -g
 
 TMD_STD     := -std=c11
-TMD_CPPFLAGS := -Iinclude -Isrc -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64 \
+
+# Which system this is. Used only for the two questions below that genuinely
+# have different answers per platform, not as a general dumping ground.
+UNAME_S     := $(shell uname -s)
+
+# Feature-test macros.
+#
+# _XOPEN_SOURCE=700 asks for POSIX.1-2008, which is what this program targets --
+# but on the BSDs and on macOS that macro does more than ask. It also switches
+# OFF the BSD-visible namespace, and `getopt_long` lives there: it is the one
+# function in this program that POSIX does not define. Asking for strict POSIX
+# on those systems therefore hides the declaration and the build fails on the
+# option parser.
+#
+#   Linux/glibc  _XOPEN_SOURCE=700 exposes everything used here
+#   macOS        needs _DARWIN_C_SOURCE alongside it to keep getopt_long
+#   the BSDs     __BSD_VISIBLE is on by default and _XOPEN_SOURCE turns it off,
+#                so the fix there is to not ask
+#
+# _FILE_OFFSET_BITS=64 is a glibc question; the BSDs have had a 64-bit off_t
+# since before it was asked. Harmless where it means nothing.
+TMD_FEATURES := -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
+ifeq ($(UNAME_S),Darwin)
+TMD_FEATURES += -D_DARWIN_C_SOURCE
+endif
+ifneq (,$(filter $(UNAME_S),FreeBSD NetBSD OpenBSD DragonFly))
+TMD_FEATURES := -D_FILE_OFFSET_BITS=64
+endif
+
+TMD_CPPFLAGS := -Iinclude -Isrc $(TMD_FEATURES) \
                 -DTMD_VERSION='"$(VERSION)"'
 
 # The warnings the code is actually clean under. -Wconversion and -Wcast-qual
@@ -105,7 +134,26 @@ FORTIFY_LEVEL := $(if $(shell printf '\043include <string.h>\nint main(void){ret
 ifeq (,$(findstring -O0,$(CFLAGS)))
 TMD_HARDEN  += -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=$(FORTIFY_LEVEL)
 endif
+# The linker half of the hardening, probed rather than assumed.
+#
+# -z relro/now/noexecstack are ELF concepts. Apple's linker rejects -z outright,
+# so hardcoding them made the build fail on macOS before it compiled a line --
+# the compiler flags above were already probed, and these were not.
+#
+# One probe for the group: they arrive together on an ELF toolchain and are
+# absent together anywhere else. The probe links rather than just parses,
+# because a linker flag is not exercised by -fsyntax-only.
+ELF_LDHARDEN := $(shell printf 'int main(void){return 0;}' \
+                  | $(CC) -Wl,-z,relro -x c - -o /dev/null > /dev/null 2>&1 \
+                  && echo yes)
+ifeq ($(ELF_LDHARDEN),yes)
 TMD_LDHARDEN := -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack
+else
+# macOS builds PIE by default and has no equivalent knobs to set here; the
+# binary is still checked by `make security`, which reads the file rather than
+# trusting the flags.
+TMD_LDHARDEN :=
+endif
 
 ALL_CFLAGS   = $(TMD_STD) $(TMD_WARNINGS) $(WERROR) $(TMD_HARDEN) $(CFLAGS)
 ALL_TESTFLAGS = $(TMD_STD) $(TEST_WARNINGS) $(WERROR) $(TMD_HARDEN) $(CFLAGS)

@@ -40,7 +40,26 @@ VERSION="$(cat "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/VERSION")"
 # without changing anything does not produce a diff -- which is what makes the
 # --check mode below meaningful.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATE="$(date -u -r "$REPO_ROOT/VERSION" '+%B %-d, %Y' 2>/dev/null || date -u '+%B %-d, %Y')"
+#
+# Two spellings deep, because this runs on macOS and the BSDs as well as Linux:
+#
+#   `date -r` means "the mtime of this file" to GNU coreutils and "this many
+#   seconds past the epoch" to BSD's date. So the epoch second is taken with
+#   whichever stat understands the question, and handed to whichever date does.
+#
+#   `%-d` -- a day number with no leading zero -- is a GNU strftime extension.
+#   BSD's strftime renders it literally rather than rejecting it, so the failure
+#   would be a manpage dated "September %-d, 2026" rather than a build that
+#   stopped. Hence a plain %d, with the zero taken off in the shell.
+EPOCH="$(stat -c %Y "$REPO_ROOT/VERSION" 2>/dev/null \
+         || stat -f %m "$REPO_ROOT/VERSION" 2>/dev/null || true)"
+if [ -n "$EPOCH" ]; then
+  DATE="$(date -u -r "$EPOCH" '+%B %d, %Y' 2>/dev/null \
+          || date -u -d "@$EPOCH" '+%B %d, %Y')"
+else
+  DATE="$(date -u '+%B %d, %Y')"
+fi
+DATE="${DATE/ 0/ }"
 
 # roff treats a leading '.' or '\' as markup and a hyphen as a soft one.
 escape_roff() {
