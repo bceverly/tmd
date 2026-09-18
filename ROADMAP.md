@@ -144,6 +144,21 @@ needed, and a from-source section in the README for it.
 Neither could be checked without a Mac, which is why the job is the deliverable
 rather than the flags.
 
+**It also found a real bug, which is the argument for the whole item.** tmd
+does not judge a compressed stream; it runs the system's decompressor and
+reports what that said. It reads the first bytes while opening, so that a
+decompressor which is not installed can be named rather than looking like an
+empty file -- and when that read came back empty, the exit status was checked
+for exactly one value and then dropped. Any other thing the decompressor was
+saying went with it, so a corrupt archive was reported as "not a tar archive"
+with nothing to say why. Which of the two paths an input takes belongs to the
+decompressor, not to tmd: GNU gzip flushes the bytes it managed before failing,
+so a half-written stream went the ordinary way and the bug stayed hidden;
+Apple's buffers and emits nothing, so the same bytes went the other way and a
+test that had passed since it was written went red. The bug was never
+macOS-specific -- a gzip header with nothing after it reproduces it on Linux,
+and that is the regression test.
+
 **And one answer, not seven.** The feature macros moved into
 `scripts/features.sh`, which the Makefile and all five analysis scripts now
 ask. They had each carried their own copy of the Linux answer, so teaching the

@@ -976,6 +976,19 @@ check "a .tar.gz reads as the archive inside it" \
 "$TMD" -f gnu.tar.gz > /dev/null 2>&1
 check_status "and succeeds" "$?" 0
 
+# A .tar.gz the decompressor cannot get a single byte out of: a complete gzip
+# header with nothing after it. The interesting part is that this reaches the
+# code by a different route than a half-written stream does -- tmd reads the
+# first bytes while opening, so a stream that yields nothing is finished before
+# the reader ever runs -- and that route used to drop the decompressor's exit
+# status on the floor. A corrupt archive then read as an empty one.
+printf '\037\213\010\000\000\000\000\000\002\377' > headeronly.tar.gz
+"$TMD" -f headeronly.tar.gz > /dev/null 2>&1
+check_status "a .tar.gz that yields nothing is an error" "$?" 1
+err="$("$TMD" -f headeronly.tar.gz 2>&1 > /dev/null)"
+check_contains "and says the stream could not be decompressed" \
+               "$err" "could not be decompressed"
+
 "$TMD" -f /dev/null > /dev/null 2>&1
 check_status "an empty file is an error" "$?" 1
 "$TMD" -f no-such-file.tar > /dev/null 2>&1

@@ -276,8 +276,27 @@ static bool spawn_codec(struct tmd_source *s, const struct wrapper *w,
     {
         int status = 0;
 
+        /*
+         * Nothing came out, so the decompressor is already finished and its
+         * status is available now rather than at end of stream.
+         *
+         * Recorded, not merely inspected. This used to read the status into a
+         * local, test it for 127, and drop it -- which meant a decompressor
+         * that failed before producing a byte left the source looking like a
+         * clean empty stream, and tmd reported a corrupt archive as "not a tar
+         * archive" with nothing to say why. Everything the ordinary path
+         * learns at end of stream has to be learned here too, because for this
+         * stream this IS the end.
+         *
+         * Which of the two paths a given input takes belongs to the
+         * decompressor: GNU gzip flushes what it managed before failing, so a
+         * half-written stream goes the ordinary way, while Apple's buffers and
+         * emits nothing, so the same bytes come here instead.
+         */
         (void)waitpid(codec, &status, 0);
         s->codec_pid = -1;
+        s->codec_status = status;
+        s->codec_reaped = true;
         if (WIFEXITED(status) && WEXITSTATUS(status) == 127)
         {
             if (err)

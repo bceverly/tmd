@@ -379,10 +379,95 @@ static void test_truncated_compressed_source(void)
     free(path);
 }
 
+/*
+ * A decompressor that fails before producing a single byte.
+ *
+ * The same failure as the truncated stream above, reached by the other path
+ * through the code -- and that path used to lose it. tmd reads the first bytes
+ * of the decompressed stream while opening, so that a decompressor which is
+ * not installed can be named rather than looking like an empty file; when that
+ * read came back empty, the exit status was examined for exactly one value
+ * (127, the shell's "no such command") and then discarded. Anything else the
+ * decompressor might have been saying -- corrupt header, truncated stream,
+ * wrong format -- was thrown away with it, and tmd reported a perfectly good
+ * archive as "not a tar archive" with nothing to say why.
+ *
+ * Which branch a given input takes is a property of the decompressor, not of
+ * tmd: GNU gzip flushes the 12 bytes it managed before failing, so a half
+ * stream takes the ordinary path, while Apple's buffers and emits nothing, so
+ * the same input takes this one. That is how this was found -- a macOS runner
+ * failing a test that had passed on Linux since it was written.
+ *
+ * A gzip header with nothing after it fails this way on every gzip.
+ */
+static const unsigned char GZ_HEADER_ONLY[] = {
+    0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff,
+};
+
+static void test_empty_failed_decompression(void)
+{
+    char *path;
+    char *err = NULL;
+
+    if (!have_gzip())
+    {
+        return;
+    }
+    path = write_temp(GZ_HEADER_ONLY, sizeof(GZ_HEADER_ONLY));
+    CHECK(path != NULL);
+    if (!path)
+    {
+        return;
+    }
+
+    TEST_CASE("a decompressor that fails before its first byte is still a "
+              "failure");
+    {
+        struct tmd_source *s;
+        int                saved_err = dup(STDERR_FILENO);
+        int                devnull = open("/dev/null", O_WRONLY);
+
+        if (devnull >= 0)
+        {
+            (void)dup2(devnull, STDERR_FILENO);
+        }
+
+        s = tmd_source_open(path, &err);
+
+        if (saved_err >= 0)
+        {
+            (void)dup2(saved_err, STDERR_FILENO);
+            (void)close(saved_err);
+        }
+        if (devnull >= 0)
+        {
+            (void)close(devnull);
+        }
+
+        /* It opens: there is nothing wrong with the file as a file, and the
+         * reader is entitled to see the empty stream. What it must not do is
+         * call that stream trustworthy. */
+        CHECK(s != NULL);
+        if (s)
+        {
+            char buf[16];
+
+            CHECK_INT(tmd_source_read(s, buf, sizeof(buf)), 0);
+            CHECK(tmd_source_codec_failed(s));
+            tmd_source_close(s);
+        }
+        free(err);
+        err = NULL;
+    }
+    (void)remove(path);
+    free(path);
+}
+
 void test_source(void)
 {
     test_memory_source();
     test_compressed_source();
     test_truncated_compressed_source();
+    test_empty_failed_decompression();
     test_file_source();
 }

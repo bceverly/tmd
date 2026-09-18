@@ -114,9 +114,24 @@ static int dump_archive(const char *path, struct tmd_render *rd,
      */
     if (tmd_source_codec_failed(src))
     {
-        (void)fprintf(stderr, "tmd: %s: the %s stream ended badly; what is "
-                              "above is only what could be decompressed\n",
-                      path, tmd_source_codec(src));
+        /*
+         * Two wordings, because the sentence has to be true. "what is above is
+         * only what could be decompressed" reads as an explanation when there
+         * are members above it and as nonsense when there are none -- and none
+         * is a real case: a decompressor can fail before emitting a single
+         * byte, which is what a corrupt header does.
+         */
+        if (tmd_source_offset(src) == 0)
+        {
+            (void)fprintf(stderr, "tmd: %s: the %s stream could not be "
+                                  "decompressed at all\n",
+                          path, tmd_source_codec(src));
+        } else
+        {
+            (void)fprintf(stderr, "tmd: %s: the %s stream ended badly; what is "
+                                  "above is only what could be decompressed\n",
+                          path, tmd_source_codec(src));
+        }
         status = TMD_EXIT_ERROR;
     }
 
