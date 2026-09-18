@@ -39,10 +39,22 @@ TMD="$(cd "$(dirname "$TMD")" && pwd)/$(basename "$TMD")"
 
 PASS=0
 FAIL=0
+SKIP=0
+SKIPS=()
 
 ok()   { PASS=$((PASS + 1)); printf '  \033[92m✓\033[0m %s\n' "$1"; }
 bad()  { FAIL=$((FAIL + 1)); printf '  \033[91m✗\033[0m %s\n' "$1"; }
 note() { printf '    \033[2m%s\033[0m\n' "$1"; }
+
+# A group of checks that did not run, and why.
+#
+# Counted and repeated at the end rather than only mentioned in passing. A run
+# that skips something still says "ok" and still exits 0, so the skip is the one
+# result a reader can miss -- and the number of checks is not a constant anyone
+# can eyeball: this suite reported 185 on Linux and 184 on macOS for a week
+# before anyone asked which one was missing, and the answer turned out to be a
+# tool that was simply not installed there.
+skip() { SKIP=$((SKIP + 1)); SKIPS+=("$1"); printf '  \033[93m-\033[0m %s\n' "$1"; }
 
 # check NAME EXPECTED ACTUAL
 check() {
@@ -150,6 +162,14 @@ touch_epoch() {
   touch -t "$_stamp" "$@"
 }
 
+# Counting lines.
+#
+# BSD wc pads its number into a column -- "       2" -- and GNU wc does not, so
+# a `wc -l` compared against a literal passes on Linux and fails on macOS with
+# the two numbers looking identical in the failure message. awk counts without
+# formatting, and is in every userland this runs on.
+count_lines() { awk 'END { print NR }'; }
+
 # script(1), for the one check that needs a real terminal. util-linux spells it
 # `script -qec CMD FILE`; the BSD and macOS one is `script -q FILE CMD`.
 if script --version > /dev/null 2>&1; then
@@ -195,7 +215,7 @@ for format in gnu ustar posix v7; do
   esac
   # shellcheck disable=SC2086  # the tree list is deliberately word-split
   if ! "$TAR" --format="$format" -cf "$archive" $source_tree 2>/dev/null; then
-    note "skipping $format: this tar cannot write it"
+    skip "$format: this tar cannot write that format"
     continue
   fi
 
@@ -230,7 +250,7 @@ if [ "$HAVE_BSDTAR" -eq 1 ]; then
   check_contains "bsdtar ustar: recognized as ustar" \
                  "$("$TMD" -f bsdustar.tar -s 2>/dev/null)" "POSIX ustar"
 else
-  note "no bsdtar (libarchive) here — the BSD-writer tests are skipped"
+  skip "bsdtar format checks: no bsdtar on this system"
 fi
 
 # ---------------------------------------------------------------------------
@@ -313,6 +333,8 @@ if [ "$HAVE_BSDTAR" -eq 1 ]; then
   check_contains "bsdtar is told apart from GNU tar by its pax header names" \
                  "$out" "libarchive (bsdtar)"
   check_contains "a pax archive is named as the third generation" "$out" "1003.1-2001"
+else
+  skip "bsdtar writer identification: no bsdtar on this system"
 fi
 
 # ---------------------------------------------------------------------------
@@ -367,7 +389,7 @@ echo "a replacement, longer than the original" > tree/hello.txt
 "$TAR" --format=gnu -rf dup.tar tree/hello.txt 2>/dev/null
 dups="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -c 'tree/hello.txt')"
 check "both copies of a duplicated path are reported" "$dups" "2"
-offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sort -u | wc -l)"
+offsets="$("$TMD" -f dup.tar -m hello.txt 2>/dev/null | grep -oE '@[0-9]+' | sort -u | count_lines)"
 check "each copy reports a different offset" "$offsets" "2"
 
 # ---------------------------------------------------------------------------
@@ -389,7 +411,7 @@ for spec in "gz:gzip:-z" "xz:xz:-J" "bz2:bzip2:-j" "zst:zstd:--zstd"; do
   flag="${rest#*:}"
 
   if ! command -v "$tool" > /dev/null 2>&1; then
-    note "$tool is not installed — skipping .tar.$ext"
+    skip ".tar.$ext: $tool is not installed"
     continue
   fi
   if ! "$TAR" "$flag" -cf "c.tar.$ext" tree 2>/dev/null; then
@@ -442,6 +464,8 @@ if command -v gzip > /dev/null 2>&1; then
   err="$(PATH=/nonexistent "$TMD" -f missing.tar.gz 2>&1 >/dev/null || true)"
   check_contains "a missing decompressor says which tool is missing" "$err" \
                  "gzip is not installed"
+else
+  skip "the missing-decompressor check: gzip is not installed"
 fi
 
 # Corrupt compressed data must not be reported as a short but valid archive:
@@ -453,6 +477,8 @@ if command -v gzip > /dev/null 2>&1; then
   check_status "a truncated .tar.gz is an error, not a partial success" "$?" 1
   err="$("$TMD" -f cut.tar.gz 2>&1 >/dev/null || true)"
   check_contains "and says the stream ended badly" "$err" "ended badly"
+else
+  skip "the truncated-.tar.gz checks: gzip is not installed"
 fi
 
 # A container that is not tar in a wrapper still says what it is.
@@ -510,6 +536,8 @@ if command -v python3 > /dev/null 2>&1; then
 import json, sys
 print(json.load(sys.stdin)["diff"]["matches"])' 2>/dev/null)"
   check "--diff reports a verdict in JSON" "$matched" "False"
+else
+  skip "the --diff JSON verdict: python3 is not installed"
 fi
 
 # ---------------------------------------------------------------------------
@@ -627,6 +655,8 @@ for e in d["entries"]:
     if len(ext) == 2:
         print("".join(x["kind"] or "-" for x in ext)); break' 2>/dev/null)"
   check "a long-name member carries an 'L' header and its payload" "$kinds" "L-"
+else
+  skip "the raw-block byte-for-byte checks: python3 is not installed"
 fi
 
 # Without -R there is nothing to report and nothing is paid for it.
@@ -663,10 +693,25 @@ check_contains "a clean archive is stated to be clean" "$out" \
                "every member stays inside the extraction directory"
 
 # An absolute path is a different class from a traversal.
-"$TAR" -cPf abs.tar /etc/hostname 2>/dev/null || true
-if [ -f abs.tar ]; then
+#
+# The archived file is one this suite just made, not a system file. The first
+# version used /etc/hostname, which exists on Linux and does not on macOS --
+# the hostname there lives in scutil, not in a file. tar wrote nothing, `|| true`
+# swallowed the error, and the guard below asked only whether abs.tar EXISTED,
+# which it did: tar creates the file before it discovers it has nothing to put
+# in it. So tmd was handed an empty archive and the check failed reporting an
+# empty string, which says nothing about what went wrong.
+#
+# Hence both halves of the fix: archive a file that is certainly there, and
+# believe tar's exit status rather than the presence of a file it may have
+# abandoned. $PWD is the suite's own temporary directory, so this is an
+# absolute path that exists on every system this runs on.
+echo "archived by its absolute path" > absfile.txt
+if "$TAR" -cPf abs.tar "$PWD/absfile.txt" 2>/dev/null && [ -s abs.tar ]; then
   err="$("$TMD" -f abs.tar 2>&1 >/dev/null)"
   check_contains "an absolute path is reported" "$err" "absolute path"
+else
+  skip "absolute paths: this tar would not write one"
 fi
 
 if command -v python3 > /dev/null 2>&1; then
@@ -678,6 +723,8 @@ print(json.load(sys.stdin)["summary"]["extraction"]["escapes"])' 2>/dev/null)"
 import json, sys
 print(json.load(sys.stdin)["summary"]["extraction"]["escapes"])' 2>/dev/null)"
   check "and says False for an archive that is fine" "$verdict" "False"
+else
+  skip "the extraction-safety JSON verdict: python3 is not installed"
 fi
 
 # ---------------------------------------------------------------------------
@@ -721,6 +768,8 @@ if command -v python3 > /dev/null 2>&1; then
 import json, sys
 print(json.load(sys.stdin)["summary"]["stat"]["timestamps"]["distinct"])' 2>/dev/null)"
   check "--stat reaches the JSON" "$distinct" "2"
+else
+  skip "the --stat JSON check: python3 is not installed"
 fi
 
 # A filter narrows what the distribution describes.
@@ -746,8 +795,8 @@ biggest="$("$TMD" -f gnu.tar --sort=size --reverse 2>/dev/null | head -1)"
 check_contains "--sort=size --reverse puts the largest first" "$biggest" "big.bin"
 
 # Sorting must not lose or invent members.
-plain_count="$("$TMD" -f gnu.tar 2>/dev/null | wc -l)"
-sorted_count="$("$TMD" -f gnu.tar --sort=size 2>/dev/null | wc -l)"
+plain_count="$("$TMD" -f gnu.tar 2>/dev/null | count_lines)"
+sorted_count="$("$TMD" -f gnu.tar --sort=size 2>/dev/null | count_lines)"
 check "sorting changes the order, not the membership" "$plain_count" "$sorted_count"
 
 # The same members, whatever the order: sorting both listings must make them
@@ -767,6 +816,8 @@ import json, sys
 paths = [e["path"] for e in json.load(sys.stdin)["entries"]]
 print("yes" if paths == sorted(paths) else "no")' 2>/dev/null)"
   check "--sort orders the JSON entries too" "$ordered" "yes"
+else
+  skip "the --sort JSON ordering check: python3 is not installed"
 fi
 
 # ---------------------------------------------------------------------------
@@ -832,19 +883,21 @@ print("yes")' 2>/dev/null)"
            | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null)"
   check "two archives produce a two-element array" "$multi" "2"
 else
-  note "python3 is not installed — the JSON validity checks are skipped"
+  skip "the JSON document checks: python3 is not installed"
 fi
 
 if command -v python3 > /dev/null 2>&1; then
   gen="$("$TMD" -f gnu.tar -i --format=json 2>/dev/null \
          | python3 -c 'import json,sys; print(json.load(sys.stdin)["summary"]["features"]["generation"])' 2>/dev/null)"
   check_contains "-i --format=json carries the generation" "$gen" "GNU branch"
+else
+  skip "the -i JSON check: python3 is not installed"
 fi
 
 csv="$("$TMD" -f gnu.tar --format=csv 2>/dev/null)"
 check_contains "csv writes a header row" "$csv" "path,kind,mode_string"
-csv_rows=$(printf '%s\n' "$csv" | tail -n +2 | wc -l)
-tar_rows=$("$TAR" -tf gnu.tar | wc -l)
+csv_rows=$(printf '%s\n' "$csv" | tail -n +2 | count_lines)
+tar_rows=$("$TAR" -tf gnu.tar | count_lines)
 check "csv has one row per member" "$csv_rows" "$tar_rows"
 
 # ---------------------------------------------------------------------------
@@ -878,7 +931,7 @@ if command -v script > /dev/null 2>&1; then
   check_contains "a bare tmd at a terminal shows the usage" \
                  "$tty_out" "dump the metadata out of a tar archive"
 else
-  note "script(1) is not installed — the bare-tmd-at-a-tty check is skipped"
+  skip "the terminal-detection check: script(1) is not installed"
 fi
 check_contains "the usage shows the copyright" "$(cat help.txt)" "Bryan C. Everly"
 
@@ -986,8 +1039,8 @@ printf '\037\213\010\000\000\000\000\000\002\377' > headeronly.tar.gz
 "$TMD" -f headeronly.tar.gz > /dev/null 2>&1
 check_status "a .tar.gz that yields nothing is an error" "$?" 1
 err="$("$TMD" -f headeronly.tar.gz 2>&1 > /dev/null)"
-check_contains "and says the stream could not be decompressed" \
-               "$err" "could not be decompressed"
+check_contains "and says nothing could be decompressed" \
+               "$err" "nothing could be decompressed"
 
 "$TMD" -f /dev/null > /dev/null 2>&1
 check_status "an empty file is an error" "$?" 1
@@ -1023,6 +1076,13 @@ check_status "-c passes on an undamaged archive" "$?" 0
 
 # ---------------------------------------------------------------------------
 printf '\n'
+if [ "$SKIP" -gt 0 ]; then
+  printf '  \033[93m%d group(s) skipped:\033[0m\n' "$SKIP"
+  for entry in "${SKIPS[@]}"; do
+    printf '    \033[2m%s\033[0m\n' "$entry"
+  done
+  printf '\n'
+fi
 if [ "$FAIL" -eq 0 ]; then
   printf '  \033[92mok\033[0m  %d end-to-end checks passed\n\n' "$PASS"
   exit 0

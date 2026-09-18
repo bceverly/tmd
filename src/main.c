@@ -120,11 +120,17 @@ static int dump_archive(const char *path, struct tmd_render *rd,
          * are members above it and as nonsense when there are none -- and none
          * is a real case: a decompressor can fail before emitting a single
          * byte, which is what a corrupt header does.
+         *
+         * They share "the STREAM ended badly", which is the part that is true
+         * either way and the part anything checking this should be looking
+         * for. Splitting the message without a common stem broke a test that
+         * had been right for a year, on the one platform that reaches the
+         * other branch.
          */
         if (tmd_source_offset(src) == 0)
         {
-            (void)fprintf(stderr, "tmd: %s: the %s stream could not be "
-                                  "decompressed at all\n",
+            (void)fprintf(stderr, "tmd: %s: the %s stream ended badly; nothing "
+                                  "could be decompressed\n",
                           path, tmd_source_codec(src));
         } else
         {
