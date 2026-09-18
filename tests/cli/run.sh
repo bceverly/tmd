@@ -136,8 +136,10 @@ fi
 # The permission bits of a file, as octal. GNU stat spells it -c %a, BSD -f %Lp.
 if stat -c %a . > /dev/null 2>&1; then
   file_mode() { stat -c %a "$1"; }
+  file_owner() { stat -c '%u/%g' "$1"; }
 else
   file_mode() { stat -f %Lp "$1"; }
+  file_owner() { stat -f '%u/%g' "$1"; }
 fi
 
 # Set a file's mtime from a Unix epoch.
@@ -184,13 +186,41 @@ fi
 # formatting, and is in every userland this runs on.
 count_lines() { awk 'END { print NR }'; }
 
-# script(1), for the one check that needs a real terminal. util-linux spells it
-# `script -qec CMD FILE`; the BSD and macOS one is `script -q FILE CMD`.
-if script --version > /dev/null 2>&1; then
-  tty_run() { script -qec "$1" /dev/null < /dev/null 2>/dev/null; }
-else
-  tty_run() { script -q /dev/null "$1" < /dev/null 2>/dev/null; }
-fi
+# script(1), for the one check that needs a real terminal.
+#
+# Four dialects, and they are not probeable: the earlier version asked whether
+# `script --version` worked and assumed everything else was BSD, which was true
+# until it met two systems where it was not. Dispatched on uname instead, with
+# the reason written down, because a probe that guesses wrong here does not
+# fail -- on NetBSD it starts an interactive session and the suite stops dead.
+#
+#   Linux (util-linux)  script -qec CMD FILE
+#   macOS, FreeBSD      script -q FILE CMD
+#   NetBSD              script -c CMD FILE
+#   OpenBSD             cannot. Its script(1) is `script [-a] [file]` -- there
+#                       is no command argument and no -q, so there is nothing
+#                       to spell. That check reports itself skipped there.
+case "$(uname -s)" in
+Linux)
+    tty_run() { script -qec "$1" /dev/null < /dev/null 2>/dev/null; }
+    HAVE_TTY_RUN=1
+    ;;
+Darwin | FreeBSD | DragonFly)
+    tty_run() { script -q /dev/null "$1" < /dev/null 2>/dev/null; }
+    HAVE_TTY_RUN=1
+    ;;
+NetBSD)
+    # -c, and deliberately no -q: -c is the part that matters and -q is only
+    # cosmetic, suppressing a "Script started" banner that the substring check
+    # below does not care about. Asking for a flag this script(1) may not have
+    # would buy nothing and could cost the whole check.
+    tty_run() { script -c "$1" /dev/null < /dev/null 2>/dev/null; }
+    HAVE_TTY_RUN=1
+    ;;
+*)
+    HAVE_TTY_RUN=0
+    ;;
+esac
 
 # ---------------------------------------------------------------------------
 # A tree with one of everything a tar header can describe.
@@ -290,8 +320,16 @@ check_contains "a hard link is marked as one" "$out" "link to"
 check_contains "setuid shows in the mode string" "$out" "rws"
 check_contains "a directory is marked with d" "$out" "drwx"
 
+# Asked of the file itself, not of the user.
+#
+# This was `$(id -u)/$(id -g)`, which is only the same thing on Linux. System V
+# semantics give a new file the creating process's group; BSD semantics give it
+# the GROUP OF THE PARENT DIRECTORY, and on all three BSDs the work directory
+# belongs to wheel -- so every file in the fixture tree was archived with gid 0
+# while `id -g` said 1001, 1000 and 100 respectively. The archive was right and
+# the expectation was wrong.
 out="$("$TMD" -f gnu.tar -n 2>/dev/null)"
-check_contains "-n prints numeric ids" "$out" "$(id -u)/$(id -g)"
+check_contains "-n prints numeric ids" "$out" "$(file_owner tree/hello.txt)"
 
 out="$("$TMD" -f gnu.tar -H 2>/dev/null)"
 check_contains "-H prints human sizes" "$out" "4.9K"
@@ -312,16 +350,30 @@ printf '\n\033[1;94m▸ sparse files\033[0m\n'
 
 # 10 MB of nothing: the archive should be a few kilobytes, and the listing
 # should still report the size the file expands to.
+#
+# Every branch below reports what it did, including doing nothing. The first
+# version of this simply wrapped each half in `if tar ... ; then` and said
+# nothing when tar declined -- so on NetBSD the whole section printed its
+# heading and then four checks' worth of silence, which reads as a section that
+# passed rather than one that never ran.
 dd if=/dev/zero of=tree/sparse.bin bs=1 count=0 seek=10000000 2>/dev/null
-if "$TAR" --sparse -cf sparse-gnu.tar tree/sparse.bin 2>/dev/null; then
-  out="$("$TMD" -f sparse-gnu.tar -l 2>/dev/null)"
-  check_contains "GNU sparse: the expanded size is reported" "$out" "10000000 bytes"
-  check_contains "GNU sparse: the member is marked sparse" "$out" "sparse "
-fi
-if "$TAR" --format=posix --sparse -cf sparse-pax.tar tree/sparse.bin 2>/dev/null; then
-  out="$("$TMD" -f sparse-pax.tar -l 2>/dev/null)"
-  check_contains "pax sparse 1.0: the expanded size is reported" "$out" "10000000 bytes"
-  check_contains "pax sparse 1.0: the real name is recovered" "$out" "tree/sparse.bin"
+if [ ! -f tree/sparse.bin ]; then
+  skip "the sparse-file checks: dd would not create a sparse file here"
+else
+  if "$TAR" --sparse -cf sparse-gnu.tar tree/sparse.bin 2>/dev/null; then
+    out="$("$TMD" -f sparse-gnu.tar -l 2>/dev/null)"
+    check_contains "GNU sparse: the expanded size is reported" "$out" "10000000 bytes"
+    check_contains "GNU sparse: the member is marked sparse" "$out" "sparse "
+  else
+    skip "GNU sparse: this tar would not write --sparse"
+  fi
+  if "$TAR" --format=posix --sparse -cf sparse-pax.tar tree/sparse.bin 2>/dev/null; then
+    out="$("$TMD" -f sparse-pax.tar -l 2>/dev/null)"
+    check_contains "pax sparse 1.0: the expanded size is reported" "$out" "10000000 bytes"
+    check_contains "pax sparse 1.0: the real name is recovered" "$out" "tree/sparse.bin"
+  else
+    skip "pax sparse 1.0: this tar would not write --format=posix --sparse"
+  fi
 fi
 rm -f tree/sparse.bin
 
@@ -932,7 +984,7 @@ check_contains "the usage shows the stdin form" "$(cat help.txt)" "| tmd"
 # And the bare-invocation-at-a-terminal behavior, which needs an actual tty.
 # script(1) allocates one; where it is missing the check is skipped rather than
 # silently dropped.
-if command -v script > /dev/null 2>&1; then
+if command -v script > /dev/null 2>&1 && [ "$HAVE_TTY_RUN" -eq 1 ]; then
   # `< /dev/null` and a grep over the WHOLE output, not `head -1`.
   #
   # script(1) copies its own stdin into the pty it allocates, and the pty
@@ -945,7 +997,7 @@ if command -v script > /dev/null 2>&1; then
   check_contains "a bare tmd at a terminal shows the usage" \
                  "$tty_out" "dump the metadata out of a tar archive"
 else
-  skip "the terminal-detection check: script(1) is not installed"
+  skip "the terminal-detection check: no script(1) that can run a command"
 fi
 check_contains "the usage shows the copyright" "$(cat help.txt)" "Bryan C. Everly"
 
