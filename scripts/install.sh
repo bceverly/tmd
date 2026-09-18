@@ -27,7 +27,31 @@ fi
 
 PREFIX="${prefix:-/usr/local}"
 BINDIR="${bindir:-$PREFIX/bin}"
-MANDIR="${mandir:-$PREFIX/share/man}"
+
+# Where a manpage goes under a local prefix, which is not the same everywhere.
+#
+#   Linux, macOS, FreeBSD   $PREFIX/share/man
+#   NetBSD, OpenBSD         $PREFIX/man
+#
+# Not a style preference -- it is where each system's man(1) actually looks.
+# OpenBSD's ports install to ${PREFIX}/man and its man.conf reads
+# /usr/local/man; NetBSD's pkgsrc sets PKGMANDIR=man for the same reason. On
+# those two, share/man puts a perfectly good file somewhere nothing reads, so
+# the install would report success and `man tmd` would answer "No manual
+# entry" -- the worst shape a bug can take, because it looks like it worked.
+#
+# The Makefile's own `mandir` stays at $(datarootdir)/man: it exists for
+# install-tree, which debian/rules calls with prefix=/usr, and /usr/share/man
+# is right there. An explicit `make install mandir=...` still wins over both.
+case "$(uname -s)" in
+NetBSD | OpenBSD)
+    DEFAULT_MANDIR="$PREFIX/man"
+    ;;
+*)
+    DEFAULT_MANDIR="$PREFIX/share/man"
+    ;;
+esac
+MANDIR="${mandir:-$DEFAULT_MANDIR}"
 DESTDIR="${DESTDIR:-}"
 PROG="${PROG:-tmd}"
 MAN_PAGE="${MAN_PAGE:-man/$PROG.1}"

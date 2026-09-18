@@ -225,7 +225,7 @@ jobs:
       # The from-source install, staged so it needs no privileges. stat is
       # spelled -f here, not -c; that difference is the whole reason this job
       # cannot just reuse the Linux one.
-      - name: make install, staged
+      - name: make install, staged and then for real
         run: |
           make install DESTDIR="$PWD/staged" prefix=/usr/local
           test -x staged/usr/local/bin/tmd
@@ -233,6 +233,11 @@ jobs:
           test "$(stat -f '%Lp' staged/usr/local/bin/tmd)" = 755
           test "$(stat -f '%Lp' staged/usr/local/share/man/man1/tmd.1)" = 644
           rm -rf staged
+          # The real install, and the question that matters about a manpage:
+          # not whether a file was written but whether man(1) finds it.
+          sudo make install
+          /usr/local/bin/tmd --version
+          man -w tmd
 
       # The binary the whole job exists to produce, doing its job: a real
       # archive, read through the decompressor tmd spawns, from a file and from
@@ -327,9 +332,22 @@ jobs:
           gmake clean && gmake build WERROR=-Werror
           gmake test-unit
           gmake test-cli
+          # Staged first: DESTDIR needs no privileges and proves the
+          # packaging path. The manpage lands under share/man or man depending
+          # on the system, so ask install.sh where rather than hardcoding it.
           gmake install DESTDIR="$PWD/staged" prefix=/usr/local
           test -x staged/usr/local/bin/tmd
-          test -f staged/usr/local/share/man/man1/tmd.1
+          find staged -name tmd.1 | grep -q . || {
+            echo "the staged install did not write a manpage" >&2
+            exit 1
+          }
+          rm -rf staged
+          # Then for real -- and the check is not "a file was written" but
+          # "man(1) can find it", which is a different question on every system
+          # and the entire reason the manpage directory is not a constant.
+          sudo gmake install
+          /usr/local/bin/tmd --version
+          man -w tmd
 
   openbsd:
     name: Tests (OpenBSD)
@@ -381,9 +399,22 @@ jobs:
           gmake clean && gmake build WERROR=-Werror
           gmake test-unit
           gmake test-cli
+          # Staged first: DESTDIR needs no privileges and proves the
+          # packaging path. The manpage lands under share/man or man depending
+          # on the system, so ask install.sh where rather than hardcoding it.
           gmake install DESTDIR="$PWD/staged" prefix=/usr/local
           test -x staged/usr/local/bin/tmd
-          test -f staged/usr/local/share/man/man1/tmd.1
+          find staged -name tmd.1 | grep -q . || {
+            echo "the staged install did not write a manpage" >&2
+            exit 1
+          }
+          rm -rf staged
+          # Then for real -- and the check is not "a file was written" but
+          # "man(1) can find it", which is a different question on every system
+          # and the entire reason the manpage directory is not a constant.
+          sudo gmake install
+          /usr/local/bin/tmd --version
+          man -w tmd
 
   netbsd:
     name: Tests (NetBSD)
@@ -436,9 +467,22 @@ jobs:
           gmake clean && gmake build WERROR=-Werror
           gmake test-unit
           gmake test-cli
+          # Staged first: DESTDIR needs no privileges and proves the
+          # packaging path. The manpage lands under share/man or man depending
+          # on the system, so ask install.sh where rather than hardcoding it.
           gmake install DESTDIR="$PWD/staged" prefix=/usr/local
           test -x staged/usr/local/bin/tmd
-          test -f staged/usr/local/share/man/man1/tmd.1
+          find staged -name tmd.1 | grep -q . || {
+            echo "the staged install did not write a manpage" >&2
+            exit 1
+          }
+          rm -rf staged
+          # Then for real -- and the check is not "a file was written" but
+          # "man(1) can find it", which is a different question on every system
+          # and the entire reason the manpage directory is not a constant.
+          sudo gmake install
+          /usr/local/bin/tmd --version
+          man -w tmd
 
   # ==========================================================================
   # Separate from `test` because it is slow and because its failures are of a

@@ -1131,6 +1131,21 @@ single year or a range, so bumping it does not mean touching every file.
 
 ## Installing
 
+Five platforms, each built and tested in CI on every push — not claimed,
+checked:
+
+| Platform | How | CI job |
+|---|---|---|
+| Ubuntu 22.04 / 24.04 / 26.04 | [the PPA](#from-the-ppa--recommended-on-ubuntu) | `Package` |
+| Any other Linux (x86-64, aarch64) | [from source](#from-source) | `Tests (gcc)`, `Tests (clang)`, `Tests (aarch64)` |
+| macOS | [from source](#from-source-on-macos) | `Tests (macOS)` |
+| FreeBSD, NetBSD, OpenBSD | [from source](#from-source-on-freebsd-netbsd-and-openbsd) | `Tests (FreeBSD)`, `Tests (NetBSD)`, `Tests (OpenBSD)` |
+
+Every one of those jobs builds, builds again with `-Werror`, runs both test
+suites, installs, and then checks that `man tmd` resolves — because "a file was
+written" and "man can find it" are different questions, and the answer differs
+by platform.
+
 ### From the PPA — recommended on Ubuntu
 
 The packaged build is the one to use on **Ubuntu 22.04, 24.04 and 26.04 LTS**.
@@ -1272,9 +1287,19 @@ installed. For reading compressed archives, `gzip` and `bzip2` are in base;
 `xz` and `zstd` are packages, and tmd names whichever one is missing rather
 than guessing.
 
-`gmake install` asks for `doas` where there is no `sudo`, which on OpenBSD is
-always — and refreshes the man index with `makewhatis` rather than `mandb`.
-Neither of those is a thing you have to know; it is listed here because it is
+**The manpage goes to `$prefix/man`, not `$prefix/share/man`,** on NetBSD and
+OpenBSD. That is where those systems' `man(1)` looks: OpenBSD's ports install
+to `${PREFIX}/man` and its `man.conf` reads `/usr/local/man`, and NetBSD's
+pkgsrc sets `PKGMANDIR=man` for the same reason. Installing to `share/man`
+there would put a perfectly good file somewhere nothing reads — the install
+would report success and `man tmd` would answer "No manual entry", which is the
+worst shape a bug can take because it looks like it worked. Linux, macOS and
+FreeBSD all use `share/man` and get it. An explicit `make install mandir=...`
+overrides either.
+
+`gmake install` also asks for `doas` where there is no `sudo`, which on OpenBSD
+is always, and refreshes the man index with `makewhatis` rather than `mandb`.
+None of this is something you have to know; it is written down because it is
 the sort of thing that is usually wrong.
 
 A `Tests (FreeBSD)`, `Tests (NetBSD)` and `Tests (OpenBSD)` job builds and runs
