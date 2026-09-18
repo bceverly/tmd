@@ -67,7 +67,9 @@ else
   ok "reusing the seed corpus in $WORK/corpus"
 fi
 
-CPPFLAGS_ALL=(-Iinclude -Isrc -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
+# Platform feature macros in one place; see scripts/features.sh.
+read -r -a TMD_FEATURES <<< "$(scripts/features.sh)"
+CPPFLAGS_ALL=(-Iinclude -Isrc "${TMD_FEATURES[@]}"
               -DTMD_VERSION="\"$VERSION\"")
 SAN=("-fsanitize=address,undefined" -fno-sanitize-recover=all
      -fno-omit-frame-pointer -O1 -g)

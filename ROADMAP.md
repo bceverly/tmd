@@ -30,7 +30,7 @@ asked of a roadmap a year later.
 | [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
 | [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600) | **aarch64 shipped** in v1.6.0.0; [big-endian declined](#a-big-endian-ci-leg) |
-| [Build and test on macOS and the BSDs](#build-and-test-on-macos-and-the-bsds--the-macos-half-v1604) | **macOS shipped** in v1.6.0.4; the three BSDs open |
+| [Build and test on macOS and the BSDs](#build-and-test-on-macos-and-the-bsds--the-macos-half-v1605) | **macOS shipped** in v1.6.0.5; the three BSDs open |
 
 One open: the BSD half of the newest item. Thirteen shipped, one declined.
 
@@ -45,7 +45,7 @@ with three items that added no switch but did add JSON keys, because a minor
 version is the unit being spent either way. v1.6.0.0 adds no switch at all:
 compressed archives are recognized by content, so nothing new had to be typed —
 but it changes what `tmd -f a.tar.gz` *does*, and adds a runtime dependency the
-package declares, which is more than a patch should carry. v1.6.0.4 stays on the
+package declares, which is more than a patch should carry. v1.6.0.5 stays on the
 patch digit by the same rule read the other way: a new CI leg and a build that
 works out its own link flags change nothing a user types and nothing a user
 gets — the Linux binary is byte for byte what it was.
@@ -123,7 +123,7 @@ The job asserts `uname -m` is aarch64 before doing anything else: a runner label
 that silently fell back to x86 would leave this reporting success while testing
 nothing.
 
-### Build and test on macOS and the BSDs — the macOS half (v1.6.0.4)
+### Build and test on macOS and the BSDs — the macOS half (v1.6.0.5)
 
 **What shipped:** a `Tests (macOS)` job on GitHub's native macOS runners —
 build, `-Werror` build, both suites, a staged `make install`, and reading a real
@@ -143,6 +143,14 @@ needed, and a from-source section in the README for it.
 
 Neither could be checked without a Mac, which is why the job is the deliverable
 rather than the flags.
+
+**And one answer, not seven.** The feature macros moved into
+`scripts/features.sh`, which the Makefile and all five analysis scripts now
+ask. They had each carried their own copy of the Linux answer, so teaching the
+Makefile about Darwin left lint, coverage, memcheck, security and fuzz still
+asserting that `_XOPEN_SOURCE=700` alone was right -- every one of which would
+have failed on a Mac, on a line about `getopt_long`, for a reason already
+fixed somewhere else in the tree.
 
 **The end-to-end suite had Linux assumptions of its own,** and they were the
 larger share of the work: `tar` meaning GNU tar, `stat -c`, `date -d @SECONDS`,

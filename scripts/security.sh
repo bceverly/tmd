@@ -44,7 +44,9 @@ note()    { printf '    \033[2m%s\033[0m\n' "$*"; }
 mkdir -p "$REPORTS"
 printf '\n\033[1mSecurity scan\033[0m \033[2m(same tools as CI)\033[0m\n'
 
-CPPFLAGS_ALL=(-Iinclude -Isrc -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
+# Platform feature macros in one place; see scripts/features.sh.
+read -r -a TMD_FEATURES <<< "$(scripts/features.sh)"
+CPPFLAGS_ALL=(-Iinclude -Isrc "${TMD_FEATURES[@]}"
               -DTMD_VERSION="\"$VERSION\"")
 
 # ---------------------------------------------------------------------------

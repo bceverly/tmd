@@ -278,6 +278,26 @@ static void test_compressed_source(void)
 }
 
 /*
+ * Does this machine's gzip actually treat a truncated stream as a failure?
+ *
+ * Asked rather than assumed, because the answer is not the same everywhere and
+ * tmd's claim depends on it. tmd does not judge a compressed stream itself --
+ * it runs the system's decompressor and reports what that decompressor did. So
+ * "a truncated stream is reported as a failed decompression" is only a property
+ * of tmd where the decompressor calls it a failure, and asserting it on a
+ * platform whose gzip exits 0 would be testing the platform, not the program.
+ *
+ * GNU gzip exits 2 on "unexpected end of file". Apple's does not agree.
+ */
+static bool gzip_rejects_truncation(const char *path)
+{
+    char cmd[128];
+
+    (void)snprintf(cmd, sizeof(cmd), "gzip -dc '%s' > /dev/null 2>&1", path);
+    return system(cmd) != 0;
+}
+
+/*
  * Truncated compressed data: the decompressor gives up part way, and what came
  * out is a prefix. Saying so is the difference between a report and a guess.
  */
@@ -301,6 +321,7 @@ static void test_truncated_compressed_source(void)
     TEST_CASE("a truncated stream is reported as a failed decompression");
     {
         struct tmd_source *s;
+        bool               rejects = gzip_rejects_truncation(path);
         /*
          * gzip says "unexpected end of file" on its own stderr, which is
          * exactly right for a user and only noise in a test log. Silenced for
@@ -325,7 +346,16 @@ static void test_truncated_compressed_source(void)
             {
                 /* draining; the point is to reach the end */
             }
-            CHECK(tmd_source_codec_failed(s));
+            /*
+             * Only where the decompressor itself called this a failure. Where
+             * it did not, the path has still been exercised -- opened, spawned,
+             * drained and reaped -- and the one thing not asserted is the one
+             * thing this machine does not provide.
+             */
+            if (rejects)
+            {
+                CHECK(tmd_source_codec_failed(s));
+            }
             tmd_source_close(s);
         }
         else

@@ -50,8 +50,13 @@ compile_commands.json
 
 # --- Analyzer and sanitizer working directories ----------------------------
 # make lint and make test-memory; both hold build logs and scratch binaries.
+# test-memory keeps two siblings of .sanitize for the same reason -- the run
+# starts by deleting .sanitize, so neither could live inside it: .sanitize.lock
+# is how it refuses to run twice in one tree, and .sanitize.failed holds the
+# log of a step that failed, which would otherwise be gone by the time anybody
+# looked. One pattern covers all three.
 .lint/
-.sanitize/
+.sanitize*
 
 # --- Fuzzing (make fuzz) ---------------------------------------------------
 # The corpus is generated; a crash file is a bug report to keep by hand, not in

@@ -28,7 +28,9 @@ OBJ_DIR="$COV_DIR/obj"
 CC="${CC:-cc}"
 VERSION="$(cat VERSION)"
 
-CPPFLAGS_ALL=(-Iinclude -Isrc -Itests -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
+# Platform feature macros in one place; see scripts/features.sh.
+read -r -a TMD_FEATURES <<< "$(scripts/features.sh)"
+CPPFLAGS_ALL=(-Iinclude -Isrc -Itests "${TMD_FEATURES[@]}"
               -DTMD_VERSION="\"$VERSION\"")
 # -O0: an optimized build merges and reorders lines, and the resulting report
 # blames coverage on lines that no longer exist as written.

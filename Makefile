@@ -49,9 +49,6 @@ CFLAGS      ?= -O2 -g
 
 TMD_STD     := -std=c11
 
-# Which system this is. Used only for the two questions below that genuinely
-# have different answers per platform, not as a general dumping ground.
-UNAME_S     := $(shell uname -s)
 
 # Feature-test macros.
 #
@@ -62,20 +59,12 @@ UNAME_S     := $(shell uname -s)
 # on those systems therefore hides the declaration and the build fails on the
 # option parser.
 #
-#   Linux/glibc  _XOPEN_SOURCE=700 exposes everything used here
-#   macOS        needs _DARWIN_C_SOURCE alongside it to keep getopt_long
-#   the BSDs     __BSD_VISIBLE is on by default and _XOPEN_SOURCE turns it off,
-#                so the fix there is to not ask
-#
-# _FILE_OFFSET_BITS=64 is a glibc question; the BSDs have had a 64-bit off_t
-# since before it was asked. Harmless where it means nothing.
-TMD_FEATURES := -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
-ifeq ($(UNAME_S),Darwin)
-TMD_FEATURES += -D_DARWIN_C_SOURCE
-endif
-ifneq (,$(filter $(UNAME_S),FreeBSD NetBSD OpenBSD DragonFly))
-TMD_FEATURES := -D_FILE_OFFSET_BITS=64
-endif
+# Worked out by scripts/features.sh rather than here, because the Makefile is
+# not the only thing that compiles this program: lint, coverage, memcheck,
+# security and fuzz each build their own instrumented copy, and each used to
+# carry its own hardcoded answer. Five of them were still asserting the Linux
+# one after this file learned better. One script, seven callers, one answer.
+TMD_FEATURES := $(shell scripts/features.sh)
 
 TMD_CPPFLAGS := -Iinclude -Isrc $(TMD_FEATURES) \
                 -DTMD_VERSION='"$(VERSION)"'

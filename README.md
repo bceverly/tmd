@@ -934,7 +934,7 @@ big-endian leg would catch one and was
 multi-byte load in the program, so the property is true by construction, and an
 emulated leg runs too slowly to sit on every push.
 
-**Platforms.** Since v1.6.0.4 a `Tests (macOS)` job runs the whole thing on a
+**Platforms.** Since v1.6.0.5 a `Tests (macOS)` job runs the whole thing on a
 native macOS runner: build, `-Werror` build, both suites, a staged `make
 install`, and reading a real `.tar.gz` from a file and from a pipe. It is there
 because two things about the build were true only on Linux and nothing said so —
@@ -1233,7 +1233,7 @@ BSD half of that suite needs nothing installed, because on macOS the system
 `tar` *is* bsdtar.
 
 The other BSDs are not yet covered by CI and are
-[on the roadmap](ROADMAP.md#build-and-test-on-macos-and-the-bsds--the-macos-half-v1604).
+[on the roadmap](ROADMAP.md#build-and-test-on-macos-and-the-bsds--the-macos-half-v1605).
 
 ### Build the package yourself
 

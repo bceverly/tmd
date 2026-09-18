@@ -18,12 +18,19 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "tmd.h"
+
 extern int         tmd_test_checks;
 extern int         tmd_test_failures;
 extern const char *tmd_test_case;
 
 void tmd_test_begin(const char *name);
-void tmd_test_fail(const char *file, int line, const char *fmt, ...);
+/* TMD_PRINTF for the same reason every other formatting function here has it:
+ * it checks the arguments at each call site. It also settles a warning, since
+ * clang's -Wformat-nonliteral objects to the vfprintf inside a variadic
+ * forwarder that has not said it is one. */
+void tmd_test_fail(const char *file, int line, const char *fmt, ...)
+    TMD_PRINTF(3, 4);
 
 #define TEST_CASE(name) tmd_test_begin(name)
 

@@ -41,12 +41,101 @@ bad()     { printf '  \033[91m✗\033[0m %s\n' "$*"; FAILURES+=("$1"); }
 skip()    { printf '  \033[93m-\033[0m %s\n' "$*"; SKIPPED+=("$1"); }
 note()    { printf '    \033[2m%s\033[0m\n' "$*"; }
 
+# ---------------------------------------------------------------------------
+# What a failing step says.
+#
+# Pointing at a log is not reporting a failure, for one reason: the next run
+# starts by deleting $WORK, so by the time anybody looks, the evidence is a
+# file from a run that passed. That is not a hypothetical -- it is how two
+# separate afternoons were spent, once here and once on a macOS runner where
+# the log could not be reached at all.
+#
+# So a failure prints its own evidence, and keeps a copy the next run will not
+# touch. The copy is named for the step rather than the time, because a second
+# failure of the same step supersedes the first and a directory of timestamped
+# logs is its own kind of unreadable.
+# ---------------------------------------------------------------------------
+show_failure() {
+  local log="$1"
+  local kept
+
+  [ -f "$log" ] || { note "no log at $log"; return; }
+  kept="$WORK.failed/$(basename "$log")"
+
+  # Beside $WORK, not inside it: inside is the one place guaranteed to be
+  # deleted by the next run, which is the whole problem being fixed. Not
+  # cleared at startup either -- a kept log stops being interesting when the
+  # same step fails again and overwrites it, and not a moment earlier.
+  mkdir -p "$WORK.failed" 2> /dev/null
+  cp "$log" "$kept" 2> /dev/null || kept="$log"
+  # The lines that say what went wrong, not the hundreds that say what did not.
+  if grep -qE '✗|FAIL|ERROR|runtime error' "$log"; then
+    grep -E '✗|FAIL|ERROR|runtime error' "$log" | head -12 | sed 's/^/      /'
+  else
+    tail -12 "$log" | sed 's/^/      /'
+  fi
+  note "full output: $kept"
+}
+
 printf '\n\033[1mMemory safety\033[0m\n'
+
+# ---------------------------------------------------------------------------
+# One run at a time in this working tree.
+#
+# $WORK is a fixed directory rather than a mktemp one, deliberately: the logs
+# and the instrumented binaries are what a failure is diagnosed from, and a
+# path that changes every run is a path nobody can find afterwards. The price
+# is that two runs in the same checkout share all of it -- one rebuilds
+# tmd-asan while the other is executing it, and both write the same log.
+#
+# What that produces is worse than an error. Every check still prints, so the
+# run looks normal; the suite just exits non-zero with nothing in the log to
+# say why, because the log that survived belongs to whichever run finished
+# last -- typically the one that passed. Diagnosed exactly once, the hard way.
+#
+# mkdir is the primitive rather than flock, which is not on macOS or the BSDs.
+# It is atomic everywhere: of two racing processes exactly one creates the
+# directory and the other is told no. The lock sits beside $WORK rather than
+# inside it, because the first thing below is to delete $WORK.
+# ---------------------------------------------------------------------------
+LOCK="$WORK.lock"
+LOCK_HELD=0
+
+# Released on the way out, but only if it is ours: a lock we failed to take
+# belongs to the run that has it, and removing that on our way out would hand
+# its directory to the next caller while it is still working.
+trap 'if [ "$LOCK_HELD" = "1" ]; then rm -rf "$LOCK"; fi' EXIT
+
+if ! mkdir "$LOCK" 2> /dev/null; then
+  holder="$(cat "$LOCK/pid" 2> /dev/null || true)"
+  if [ -n "$holder" ] && kill -0 "$holder" 2> /dev/null; then
+    bad "another memcheck is already running in this tree (pid $holder)"
+    note "Both would share $WORK -- the instrumented binaries and the logs --"
+    note "so this one would overwrite what that one is still using. Wait for it"
+    note "to finish, or stop it, and run again."
+    printf '\n'
+    exit 1
+  fi
+  # Nobody alive is holding it: a previous run was killed before it could clean
+  # up. Taking it over is the right answer, and racing to take it over is safe
+  # -- the mkdir below is what decides, and the loser is told no.
+  note "clearing a stale lock left by pid ${holder:-unknown}"
+  rm -rf "$LOCK"
+  if ! mkdir "$LOCK" 2> /dev/null; then
+    bad "could not take $LOCK"
+    printf '\n'
+    exit 1
+  fi
+fi
+LOCK_HELD=1
+echo "$$" > "$LOCK/pid"
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
-CPPFLAGS_ALL=(-Iinclude -Isrc -Itests -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
+# Platform feature macros in one place; see scripts/features.sh.
+read -r -a TMD_FEATURES <<< "$(scripts/features.sh)"
+CPPFLAGS_ALL=(-Iinclude -Isrc -Itests "${TMD_FEATURES[@]}"
               -DTMD_VERSION="\"$VERSION\"")
 
 # ---------------------------------------------------------------------------
@@ -139,14 +228,15 @@ if "$CC" "${CPPFLAGS_ALL[@]}" "${SAN_FLAGS[@]}" -o "$WORK/tmd-asan" src/*.c \
     ok "unit tests are clean under ASan/UBSan (leak detection on)"
   else
     bad "unit tests failed under the sanitizers"
-    note "see $WORK/unittests-asan.log and $WORK/asan.*"
+    show_failure "$WORK/unittests-asan.log"
+    note "and $WORK/asan.*"
   fi
 
   if tests/cli/run.sh "$WORK/tmd-asan" > "$WORK/cli-asan.log" 2>&1; then
     ok "end-to-end tests are clean under ASan/UBSan"
   else
     bad "end-to-end tests failed under the sanitizers"
-    note "see $WORK/cli-asan.log"
+    show_failure "$WORK/cli-asan.log"
   fi
 
   run_over_corpus "$WORK/tmd-asan" "$WORK/corpus"

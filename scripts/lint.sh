@@ -51,7 +51,10 @@ WARNINGS=(-Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
 # the same thing — and would then have to be edited in five places to add one
 # enumerator. -Wswitch, which -Wall already includes, catches the case that
 # actually matters: a switch with no default that forgot a value.
-CPPFLAGS_ALL=(-Iinclude -Isrc -Itests -D_XOPEN_SOURCE=700 -D_FILE_OFFSET_BITS=64
+# The feature macros come from scripts/features.sh, not from here: they differ
+# per platform and there are seven places that need the same answer.
+read -r -a TMD_FEATURES <<< "$(scripts/features.sh)"
+CPPFLAGS_ALL=(-Iinclude -Isrc -Itests "${TMD_FEATURES[@]}"
               -D_FORTIFY_SOURCE=3 -DTMD_VERSION="\"$VERSION\"")
 
 # ---------------------------------------------------------------------------
