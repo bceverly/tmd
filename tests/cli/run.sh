@@ -162,6 +162,20 @@ touch_epoch() {
   touch -t "$_stamp" "$@"
 }
 
+# The first N BYTES of a stream.
+#
+# `head -c N` is in GNU, FreeBSD, NetBSD and macOS. OpenBSD's head takes a line
+# count and nothing else -- it is the one place in this suite where a tool is
+# not merely spelled differently but absent -- so there it has to be dd. bs=1
+# rather than bs=$1 count=1 on purpose: a single large read of a pipe is
+# allowed to come back short, and a truncation test that truncates to a
+# different length than it asked for is worse than no test.
+if head -c 1 < /dev/null > /dev/null 2>&1; then
+  head_bytes() { head -c "$1"; }
+else
+  head_bytes() { dd bs=1 count="$1" 2>/dev/null; }
+fi
+
 # Counting lines.
 #
 # BSD wc pads its number into a column -- "       2" -- and GNU wc does not, so
@@ -472,7 +486,7 @@ fi
 # what came out is a prefix, and saying so is the whole point.
 if command -v gzip > /dev/null 2>&1; then
   "$TAR" -z -cf trunc.tar.gz tree 2>/dev/null
-  head -c 120 trunc.tar.gz > cut.tar.gz
+  head_bytes 120 < trunc.tar.gz > cut.tar.gz
   "$TMD" -f cut.tar.gz > /dev/null 2>&1
   check_status "a truncated .tar.gz is an error, not a partial success" "$?" 1
   err="$("$TMD" -f cut.tar.gz 2>&1 >/dev/null || true)"
@@ -828,8 +842,8 @@ printf '\n\033[1;94m▸ output formats\033[0m\n'
 # type name are accepted, so all four spellings below must agree exactly.
 for spelling in "-t JSON" "-t json" "--format=json"; do
   # shellcheck disable=SC2086
-  if [ "$("$TMD" -f gnu.tar $spelling 2>/dev/null | head -c 200)" \
-     = "$("$TMD" -f gnu.tar --format=json 2>/dev/null | head -c 200)" ]; then
+  if [ "$("$TMD" -f gnu.tar $spelling 2>/dev/null | head_bytes 200)" \
+     = "$("$TMD" -f gnu.tar --format=json 2>/dev/null | head_bytes 200)" ]; then
     ok "\"$spelling\" selects JSON"
   else
     bad "\"$spelling\" does not match --format=json"
@@ -1052,7 +1066,7 @@ for i in $(seq 1 40); do echo "padding line $i to get past 512 bytes" >> text.tx
 "$TMD" -f text.txt > /dev/null 2>&1
 check_status "a text file is not a tar archive" "$?" 1
 
-head -c 3000 gnu.tar > truncated.tar
+head_bytes 3000 < gnu.tar > truncated.tar
 "$TMD" -f truncated.tar > /dev/null 2>&1
 check_status "a truncated archive still lists what survived" "$?" 0
 "$TMD" -f truncated.tar -c > /dev/null 2>&1

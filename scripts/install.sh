@@ -57,14 +57,20 @@ writable() {
   [ -w "$dir" ]
 }
 
+# sudo, or doas where that is what the system has. OpenBSD ships doas and no
+# sudo at all -- sudo left the base system in 5.8 -- so insisting on sudo would
+# make `make install` impossible there on a stock machine, for no reason beyond
+# the name of the program.
 SUDO=""
 if [ "$(id -u)" != "0" ] \
    && { ! writable "$(dirname "$BIN_TARGET")" \
         || ! writable "$(dirname "$MAN_TARGET")"; }; then
   if command -v sudo > /dev/null 2>&1; then
     SUDO="sudo"
+  elif command -v doas > /dev/null 2>&1; then
+    SUDO="doas"
   else
-    die "$BINDIR is not writable and sudo is not installed.
+    die "$BINDIR is not writable and neither sudo nor doas is installed.
        Either run this as root, or choose somewhere you can write:
          make install prefix=\$HOME/.local"
   fi
@@ -74,7 +80,12 @@ if [ -n "$SUDO" ]; then
   printf '\n\033[1mInstalling\033[0m \033[2m(needs root for %s)\033[0m\n\n' "$PREFIX"
   # Ask once, up front, so the password prompt does not appear in the middle of
   # the work with no explanation of what wants it.
-  $SUDO -v || die "could not obtain the privileges to write to $PREFIX"
+  #
+  # `$SUDO true` rather than `sudo -v`, which is the natural spelling and which
+  # doas does not have: -v is sudo's "refresh the timestamp and run nothing".
+  # Running true through the escalation does the same job in a way both
+  # programs understand.
+  $SUDO true || die "could not obtain the privileges to write to $PREFIX"
 else
   printf '\n\033[1m%s\033[0m\n\n' "$([ "$UNINSTALL" = 1 ] && echo Uninstalling || echo Installing)"
 fi
@@ -102,12 +113,24 @@ fi
 #
 # Skipped for a staged install: DESTDIR is a directory being assembled for a
 # package, and indexing it would describe a filesystem that does not exist yet.
-if [ -z "$DESTDIR" ] && command -v mandb > /dev/null 2>&1; then
-  # Claimed only when it actually happened. mandb fails for an unprivileged
-  # install into a private prefix, and saying "refreshed" anyway would be a
-  # small lie in the one place a reader is checking whether `man tmd` will work.
-  if $SUDO mandb -q > /dev/null 2>&1; then
-    note "man database refreshed"
+#
+# Two spellings: mandb is the man-db one that Linux ships, makewhatis is the
+# mandoc one on the BSDs and macOS. They also disagree about arguments --
+# mandb rebuilds everything it knows about, makewhatis is told which directory
+# -- so they cannot share a line.
+if [ -z "$DESTDIR" ]; then
+  # Claimed only when it actually happened. Either one fails for an
+  # unprivileged install into a private prefix, and saying "refreshed" anyway
+  # would be a small lie in the one place a reader is checking whether
+  # `man tmd` will work.
+  if command -v mandb > /dev/null 2>&1; then
+    if $SUDO mandb -q > /dev/null 2>&1; then
+      note "man database refreshed"
+    fi
+  elif command -v makewhatis > /dev/null 2>&1; then
+    if $SUDO makewhatis "$MANDIR" > /dev/null 2>&1; then
+      note "man database refreshed"
+    fi
   fi
 fi
 

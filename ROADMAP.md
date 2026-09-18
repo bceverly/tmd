@@ -30,9 +30,9 @@ asked of a roadmap a year later.
 | [`--sort` for the listing](#--sort-for-the-listing-v1300) | **Shipped** in v1.3.0.0 |
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
 | [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600) | **aarch64 shipped** in v1.6.0.0; [big-endian declined](#a-big-endian-ci-leg) |
-| [Build and test on macOS and the BSDs](#build-and-test-on-macos-and-the-bsds--the-macos-half-v1605) | **macOS shipped** in v1.6.0.5; the three BSDs open |
+| [Build and test on macOS and the BSDs](#build-and-test-on-macos-and-the-bsds) | **Shipped**: macOS natively, the three BSDs in QEMU |
 
-One open: the BSD half of the newest item. Thirteen shipped, one declined.
+Nothing open. Fourteen shipped, one declined.
 
 The roadmap has been worked through. New ideas go under
 [Other ideas](#other-ideas); anything decided against goes to
@@ -45,10 +45,10 @@ with three items that added no switch but did add JSON keys, because a minor
 version is the unit being spent either way. v1.6.0.0 adds no switch at all:
 compressed archives are recognized by content, so nothing new had to be typed —
 but it changes what `tmd -f a.tar.gz` *does*, and adds a runtime dependency the
-package declares, which is more than a patch should carry. v1.6.0.5 stays on the
-patch digit by the same rule read the other way: a new CI leg and a build that
-works out its own link flags change nothing a user types and nothing a user
-gets — the Linux binary is byte for byte what it was.
+package declares, which is more than a patch should carry. The macOS and BSD
+work stays on the patch digit by the same rule read the other way: new CI legs
+and a build that works out its own link flags change nothing a user types and
+nothing a user gets — the Linux binary is byte for byte what it was.
 
 ---
 
@@ -123,12 +123,14 @@ The job asserts `uname -m` is aarch64 before doing anything else: a runner label
 that silently fell back to x86 would leave this reporting success while testing
 nothing.
 
-### Build and test on macOS and the BSDs — the macOS half (v1.6.0.5)
+### Build and test on macOS and the BSDs
 
-**What shipped:** a `Tests (macOS)` job on GitHub's native macOS runners —
-build, `-Werror` build, both suites, a staged `make install`, and reading a real
-`.tar.gz` from a file and from a pipe — plus the portability work that job
-needed, and a from-source section in the README for it.
+**What shipped:** four jobs. `Tests (macOS)` on GitHub's native macOS runners
+— build, `-Werror` build, both suites, a staged `make install`, and reading a
+real `.tar.gz` from a file and from a pipe — then `Tests (FreeBSD)`,
+`Tests (NetBSD)` and `Tests (OpenBSD)` doing the same inside QEMU virtual
+machines, because GitHub has no BSD runners. Plus the portability work all four
+needed, and from-source sections in the README for each.
 
 **Two things about the build were true only on Linux, and nothing said so.**
 
@@ -175,12 +177,19 @@ without a fork. GNU tar arrives from Homebrew as `gtar`; bsdtar needs no
 installing on macOS, because there it *is* the system `tar`, so the BSD-writer
 half of the suite runs natively rather than being skipped.
 
-**The three BSDs stay open.** GitHub has no FreeBSD, NetBSD or OpenBSD runners,
-so those legs mean `vmactions/*-vm` — a qemu VM started per job, the repository
-rsynced in, and the build run inside. That is a different kind of cost from a
-native runner and a different kind of failure to debug, and it is worth doing
-only once the portability work above is known to hold somewhere that is not
-Linux. macOS was the cheap way to find that out.
+**Then the three BSDs, in `vmactions/*-vm` virtual machines** — the repository
+rsynced in, the build run inside, the actions pinned by commit rather than by
+tag. Two packages are installed rather than worked around: `gmake`, because the
+Makefile is GNU make thirty-five constructs deep and BSD make fails on its
+syntax rather than degrading; and `bash`, because seventeen scripts here start
+with it. Rewriting either to avoid a package that is one command away on all
+three systems would cost more than it could return.
+
+OpenBSD earned its place as the strictest of the three. It is the only system
+where a tool this suite uses is *absent* rather than spelled differently — its
+`head(1)` takes a line count and has no `-c` — and the only one with no `sudo`
+at all, so `make install` learned `doas`, and `makewhatis` for the man index
+where Linux has `mandb`.
 
 ### `--diff` between two archives (v1.5.0.0)
 

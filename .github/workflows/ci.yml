@@ -248,6 +248,134 @@ jobs:
           rm -rf t t.tar.gz
 
   # ==========================================================================
+  # The three BSDs, each in a QEMU virtual machine.
+  #
+  # GitHub has no BSD runners, so these are vmactions VMs: the repository is
+  # rsynced in and the build runs inside. That is a different cost from the
+  # native macOS runner -- minutes of boot before a line is compiled -- and a
+  # different kind of failure to read, so it was worth doing only once the
+  # portability work was known to hold somewhere that is not Linux. macOS was
+  # that somewhere.
+  #
+  # Two things are installed rather than worked around, deliberately:
+  #
+  #   gmake. The Makefile is GNU make -- ifeq, :=, $(shell), $(filter), thirty
+  #   five constructs deep. Under BSD make it does not degrade, it fails on
+  #   syntax. Rewriting it to be portable between two make dialects would cost
+  #   more than it could ever return.
+  #
+  #   bash. Seventeen scripts here start with it. Converting them all to POSIX
+  #   sh to avoid one package is not a trade worth making.
+  #
+  # Both are one `pkg_add` away on every one of these systems, and the README
+  # says so in the from-source instructions.
+  #
+  # python3 is NOT installed on OpenBSD, where naming the package is its own
+  # small adventure. The JSON checks it guards will report themselves as
+  # skipped rather than vanishing -- which is the whole reason the suite
+  # learned to say what it skipped.
+  #
+  # The actions are pinned by commit, not by tag: a tag is a moving target and
+  # these run with the repository checked out inside them.
+  freebsd:
+    name: Tests (FreeBSD)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and test in a FreeBSD VM
+        uses: vmactions/freebsd-vm@d1e65811565151536c0c894fff74f06351ed26e6 # v1.4.5
+        with:
+          release: "14.0"
+          usesh: true
+          prepare: |
+            pkg install -y bash gmake gtar xz zstd python3
+          run: |
+            set -e
+            uname -srm
+            cc --version | head -1
+            gmake --version | head -1
+            gtar --version | head -1
+            gmake build
+            gmake clean && gmake build WERROR=-Werror
+            gmake test-unit
+            gmake test-cli
+            gmake install DESTDIR="$PWD/staged" prefix=/usr/local
+            test -x staged/usr/local/bin/tmd
+            test -f staged/usr/local/share/man/man1/tmd.1
+
+  openbsd:
+    name: Tests (OpenBSD)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The strictest of the three, and the only system where a tool this suite
+      # uses is absent rather than spelled differently: OpenBSD's head(1) takes
+      # a line count and has no -c, so the suite falls back to dd there.
+      - name: Build and test in an OpenBSD VM
+        uses: vmactions/openbsd-vm@18edb32f4e48dae5865d7b8b3a9587bc01218a20 # v1.4.4
+        with:
+          release: "7.9"
+          usesh: true
+          sync: rsync
+          prepare: |
+            pkg_add -I bash gmake gtar xz zstd
+          run: |
+            set -e
+            uname -srm
+            cc --version | head -1
+            gmake --version | head -1
+            gtar --version | head -1
+            gmake build
+            gmake clean && gmake build WERROR=-Werror
+            gmake test-unit
+            gmake test-cli
+            gmake install DESTDIR="$PWD/staged" prefix=/usr/local
+            test -x staged/usr/local/bin/tmd
+            test -f staged/usr/local/share/man/man1/tmd.1
+
+  netbsd:
+    name: Tests (NetBSD)
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build and test in a NetBSD VM
+        uses: vmactions/netbsd-vm@eb3ba840926911ccf17dc9de235335cb27a02ba0 # v1.3.8
+        with:
+          release: "10.0"
+          usesh: true
+          # PKG_PATH spelled out because NetBSD's pkg_add has no default one,
+          # and x86_64 rather than amd64: the amd64 URL only resolves through a
+          # redirect that pkg_add does not follow reliably.
+          prepare: |
+            export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/x86_64/10.0/All"
+            pkg_add -v bash gmake gtar xz zstd
+          run: |
+            set -e
+            uname -srm
+            cc --version | head -1
+            gmake --version | head -1
+            gtar --version | head -1
+            gmake build
+            gmake clean && gmake build WERROR=-Werror
+            gmake test-unit
+            gmake test-cli
+            gmake install DESTDIR="$PWD/staged" prefix=/usr/local
+            test -x staged/usr/local/bin/tmd
+            test -f staged/usr/local/share/man/man1/tmd.1
+
+  # ==========================================================================
   # Separate from `test` because it is slow and because its failures are of a
   # different kind: not "the answer is wrong" but "the program did something it
   # is not allowed to do".

@@ -934,7 +934,7 @@ big-endian leg would catch one and was
 multi-byte load in the program, so the property is true by construction, and an
 emulated leg runs too slowly to sit on every push.
 
-**Platforms.** Since v1.6.0.5 a `Tests (macOS)` job runs the whole thing on a
+**Platforms.** A `Tests (macOS)` job runs the whole thing on a
 native macOS runner: build, `-Werror` build, both suites, a staged `make
 install`, and reading a real `.tar.gz` from a file and from a pipe. It is there
 because two things about the build were true only on Linux and nothing said so —
@@ -943,6 +943,15 @@ Darwin's strict-POSIX switch. Both are now decided by the Makefile at build
 time, and that job is what checks the decision. Lint, coverage and the memory
 suite stay on Linux: the analyzers differ by version, and one coverage gate
 arguing with itself per platform helps nobody.
+
+Three more jobs — `Tests (FreeBSD)`, `Tests (NetBSD)` and `Tests (OpenBSD)` —
+do the same in QEMU virtual machines, because GitHub has no BSD runners. They
+are slower by minutes of boot time and were worth adding only once the
+portability work was known to hold somewhere that is not Linux; macOS was that
+somewhere, and it found a real bug in the process. OpenBSD is the strictest of
+the three and the only system where a tool this suite uses is absent rather
+than spelled differently: its `head(1)` takes a line count and has no `-c`, so
+the suite falls back to `dd` there.
 
 **End-to-end tests** do the opposite: they build archives with the real `tar`
 and `bsdtar`, in every format each can write, and check that `tmd`'s listing
@@ -1232,8 +1241,45 @@ tar, for GNU spellings like `--format=gnu` and `--no-recursion` that the system
 BSD half of that suite needs nothing installed, because on macOS the system
 `tar` *is* bsdtar.
 
-The other BSDs are not yet covered by CI and are
-[on the roadmap](ROADMAP.md#build-and-test-on-macos-and-the-bsds--the-macos-half-v1605).
+### From source on FreeBSD, NetBSD and OpenBSD
+
+Two packages, and then the same three commands as everywhere else:
+
+```bash
+pkg install gmake gtar bash      # FreeBSD
+pkgin install gmake gtar bash    # NetBSD
+pkg_add gmake gtar bash          # OpenBSD
+```
+
+```bash
+git clone https://github.com/bceverly/tmd.git
+cd tmd
+gmake build
+doas gmake install               # or sudo, where that is what you have
+```
+
+**`gmake`, not `make`.** The Makefile is GNU make — `ifeq`, `:=`, `$(shell)`,
+`$(filter)` — and under BSD make it does not degrade gracefully, it fails on
+syntax. Making one Makefile portable between two make dialects would cost more
+than it could ever return, so the answer is the package that is one command
+away on all three.
+
+**`bash`** is what the build and test scripts are written in. **`gtar`** is only
+needed to run `gmake test-cli`, which builds its fixtures with GNU tar for
+spellings like `--format=gnu` that the system `tar` does not have — the system
+`tar` is bsdtar, so the BSD half of that suite runs natively with nothing
+installed. For reading compressed archives, `gzip` and `bzip2` are in base;
+`xz` and `zstd` are packages, and tmd names whichever one is missing rather
+than guessing.
+
+`gmake install` asks for `doas` where there is no `sudo`, which on OpenBSD is
+always — and refreshes the man index with `makewhatis` rather than `mandb`.
+Neither of those is a thing you have to know; it is listed here because it is
+the sort of thing that is usually wrong.
+
+A `Tests (FreeBSD)`, `Tests (NetBSD)` and `Tests (OpenBSD)` job builds and runs
+both suites in a QEMU virtual machine on every push, so none of the above is a
+claim that goes unchecked.
 
 ### Build the package yourself
 
