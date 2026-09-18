@@ -177,9 +177,14 @@ without a fork. GNU tar arrives from Homebrew as `gtar`; bsdtar needs no
 installing on macOS, because there it *is* the system `tar`, so the BSD-writer
 half of the suite runs natively rather than being skipped.
 
-**Then the three BSDs, in `vmactions/*-vm` virtual machines** — the repository
-rsynced in, the build run inside, the actions pinned by commit rather than by
-tag. Two packages are installed rather than worked around: `gmake`, because the
+**Then the three BSDs, in `cross-platform-actions` virtual machines** — the
+repository synced in, the build run inside, the action pinned by commit rather
+than by tag. `vmactions` was tried first and its NetBSD 10.0 image never
+booted: it died in a five-minute watchdog retry loop before rsync, before the
+package install, before a single line of this repository ran. The replacement,
+versions included, is the configuration already proven in the sibling
+`sysmanage` repository — which carries a comment describing that exact failure,
+and the step-level timeout that bounds it. Two packages are installed rather than worked around: `gmake`, because the
 Makefile is GNU make thirty-five constructs deep and BSD make fails on its
 syntax rather than degrading; and `bash`, because seventeen scripts here start
 with it. Rewriting either to avoid a package that is one command away on all

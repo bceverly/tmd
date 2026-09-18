@@ -4,8 +4,21 @@
 # Run `make` with no arguments for the list of targets.
 # =============================================================================
 
-SHELL       := /bin/bash
-.SHELLFLAGS := -eu -o pipefail -c
+# /bin/sh, and POSIX flags to go with it.
+#
+# This was /bin/bash with `-o pipefail`, which is two portability problems in
+# one line. OpenBSD puts bash in /usr/local/bin, so every recipe there failed
+# with "/bin/bash: No such file or directory" before a byte was compiled; and
+# pipefail is a bash-ism that OpenBSD's sh does not have, so it could not
+# simply be repointed.
+#
+# Nothing here needs either. The recipes run scripts, the compiler, and a
+# handful of coreutils; the scripts carry their own `#!/usr/bin/env bash` and
+# find bash wherever it lives. There are three pipelines in the whole file and
+# not one of them depends on pipefail -- two are followed by `|| true` or an
+# `||` fallback, and the third pipes find into xargs to delete files.
+SHELL       := /bin/sh
+.SHELLFLAGS := -eu -c
 
 # The released number, and the one this build actually carries.
 #
@@ -406,7 +419,7 @@ clean: ## Remove every intermediate file: objects, binaries, coverage, logs
 	        \( -name '*.o' -o -name '*.d' -o -name '*.gcda' -o -name '*.gcno' \
 	           -o -name '*.gcov' -o -name '*.core' -o -name 'core.[0-9]*' \
 	           -o -name 'vgcore.*' \) -type f -print0 2>/dev/null \
-	  | xargs -0 -r rm -f
+	  | xargs -0 rm -f 2> /dev/null || true
 	@echo "Cleaned. (The generated manpage and coverage badge are kept; both are committed.)"
 
 .PHONY: distclean

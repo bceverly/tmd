@@ -250,62 +250,86 @@ jobs:
   # ==========================================================================
   # The three BSDs, each in a QEMU virtual machine.
   #
-  # GitHub has no BSD runners, so these are vmactions VMs: the repository is
-  # rsynced in and the build runs inside. That is a different cost from the
-  # native macOS runner -- minutes of boot before a line is compiled -- and a
-  # different kind of failure to read, so it was worth doing only once the
-  # portability work was known to hold somewhere that is not Linux. macOS was
-  # that somewhere.
+  # GitHub has no BSD runners, so these are guest images booted per job with
+  # the repository synced in. That is a different cost from the native macOS
+  # runner -- minutes of boot before a line is compiled -- and a different kind
+  # of failure to read, so it was worth doing only once the portability work
+  # was known to hold somewhere that is not Linux. macOS was that somewhere.
   #
-  # Two things are installed rather than worked around, deliberately:
+  # cross-platform-actions rather than vmactions, and the difference was not
+  # cosmetic: the vmactions NetBSD 10.0 image never booted at all, dying in a
+  # five-minute watchdog retry loop before rsync, before `prepare`, before a
+  # single line of this repository ran. The configuration below, the versions
+  # included, is the one proven in ../sysmanage's bsd-tests.yml.
   #
-  #   gmake. The Makefile is GNU make -- ifeq, :=, $(shell), $(filter), thirty
-  #   five constructs deep. Under BSD make it does not degrade, it fails on
-  #   syntax. Rewriting it to be portable between two make dialects would cost
-  #   more than it could ever return.
+  # Since v1.3.0 the action only starts the VM; commands run in a LATER step
+  # through `shell: cpa.sh {0}`, against a guest that persists between steps.
   #
-  #   bash. Seventeen scripts here start with it. Converting them all to POSIX
-  #   sh to avoid one package is not a trade worth making.
+  # Two things are installed rather than worked around:
   #
-  # Both are one `pkg_add` away on every one of these systems, and the README
-  # says so in the from-source instructions.
+  #   gmake. The Makefile is GNU make -- ifeq, :=, $(shell), $(filter). Under
+  #   BSD make it does not degrade, it fails on syntax. Making one Makefile
+  #   portable between two make dialects would cost more than it could return.
   #
-  # python3 is NOT installed on OpenBSD, where naming the package is its own
-  # small adventure. The JSON checks it guards will report themselves as
-  # skipped rather than vanishing -- which is the whole reason the suite
-  # learned to say what it skipped.
+  #   bash. Eighteen scripts here start with it. The Makefile itself no longer
+  #   needs it -- SHELL is /bin/sh, because OpenBSD puts bash in /usr/local/bin
+  #   and every recipe failed there -- but the scripts still do.
   #
-  # The actions are pinned by commit, not by tag: a tag is a moving target and
-  # these run with the repository checked out inside them.
+  # python3 is not installed anywhere here. It guards only the JSON checks, and
+  # those now report themselves as skipped rather than silently vanishing.
   freebsd:
     name: Tests (FreeBSD)
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build and test in a FreeBSD VM
-        uses: vmactions/freebsd-vm@d1e65811565151536c0c894fff74f06351ed26e6 # v1.4.5
+      - name: Start the FreeBSD VM
+        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        # Bound the boot. When a guest image fails to come up the action retries
+        # for as long as it is allowed to, with no attempt cap of its own, so a
+        # dead VM eats the whole job budget before anyone is told. A healthy one
+        # boots in two to four minutes.
+        timeout-minutes: 15
         with:
-          release: "14.0"
-          usesh: true
-          prepare: |
-            pkg install -y bash gmake gtar xz zstd python3
-          run: |
-            set -e
-            uname -srm
-            cc --version | head -1
-            gmake --version | head -1
-            gtar --version | head -1
-            gmake build
-            gmake clean && gmake build WERROR=-Werror
-            gmake test-unit
-            gmake test-cli
-            gmake install DESTDIR="$PWD/staged" prefix=/usr/local
-            test -x staged/usr/local/bin/tmd
-            test -f staged/usr/local/share/man/man1/tmd.1
+          operating_system: freebsd
+          version: "14.3"
+
+      - name: Build and test
+        shell: cpa.sh {0}
+        run: |
+          set -e
+          # One package per line: pkg aborts the entire batch over a single
+          # name it cannot resolve, which is how `xz` -- shipped in FreeBSD
+          # base, and therefore not a package at all -- took down a run that
+          # had nothing else wrong with it.
+          sudo pkg install -y bash
+          sudo pkg install -y gmake
+          sudo pkg install -y gtar
+          # Checked before anything is printed about them: `gtar --version |
+          # head -1` reports head's exit status, not gtar's, so a missing gtar
+          # announced itself and then let the script carry on to fail forty
+          # lines later somewhere that did not name it.
+          for t in bash gmake gtar; do
+            command -v "$t" > /dev/null 2>&1 || {
+              echo "required tool not installed: $t" >&2
+              exit 1
+            }
+          done
+          uname -srm
+          cc --version | head -1
+          gmake --version | head -1
+          gtar --version | head -1
+          gmake build
+          gmake clean && gmake build WERROR=-Werror
+          gmake test-unit
+          gmake test-cli
+          gmake install DESTDIR="$PWD/staged" prefix=/usr/local
+          test -x staged/usr/local/bin/tmd
+          test -f staged/usr/local/share/man/man1/tmd.1
 
   openbsd:
     name: Tests (OpenBSD)
@@ -313,33 +337,53 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
+      - name: Start the OpenBSD VM
+        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        timeout-minutes: 15
+        with:
+          operating_system: openbsd
+          version: "7.9"
+
       # The strictest of the three, and the only system where a tool this suite
       # uses is absent rather than spelled differently: OpenBSD's head(1) takes
-      # a line count and has no -c, so the suite falls back to dd there.
-      - name: Build and test in an OpenBSD VM
-        uses: vmactions/openbsd-vm@18edb32f4e48dae5865d7b8b3a9587bc01218a20 # v1.4.4
-        with:
-          release: "7.9"
-          usesh: true
-          sync: rsync
-          prepare: |
-            pkg_add -I bash gmake gtar xz zstd
-          run: |
-            set -e
-            uname -srm
-            cc --version | head -1
-            gmake --version | head -1
-            gtar --version | head -1
-            gmake build
-            gmake clean && gmake build WERROR=-Werror
-            gmake test-unit
-            gmake test-cli
-            gmake install DESTDIR="$PWD/staged" prefix=/usr/local
-            test -x staged/usr/local/bin/tmd
-            test -f staged/usr/local/share/man/man1/tmd.1
+      # a line count and has no -c, so the suite falls back to dd there. It is
+      # also the only one with no sudo in base -- hence doas in the installer --
+      # though the VM image here does provide sudo for CI's benefit.
+      - name: Build and test
+        shell: cpa.sh {0}
+        run: |
+          set -e
+          # gtar-- , not gtar. OpenBSD has gtar-1.35p1 and a -static flavor of
+          # it, and pkg_add refuses an ambiguous stem: "Ambiguous: gtar could be
+          # gtar-1.35p1 gtar-1.35p1-static". A trailing -- is the documented way
+          # to say "this stem, no flavor".
+          sudo pkg_add -I bash gmake gtar--
+          # Best effort: these are what the .tar.xz and .tar.zst checks need and
+          # nothing else, so a name that moves in a future release should cost
+          # those checks -- which then report themselves as skipped -- and not
+          # the whole job.
+          sudo pkg_add -I xz zstd || true
+          for t in bash gmake gtar; do
+            command -v "$t" > /dev/null 2>&1 || {
+              echo "required tool not installed: $t" >&2
+              exit 1
+            }
+          done
+          uname -srm
+          cc --version | head -1
+          gmake --version | head -1
+          gtar --version | head -1
+          gmake build
+          gmake clean && gmake build WERROR=-Werror
+          gmake test-unit
+          gmake test-cli
+          gmake install DESTDIR="$PWD/staged" prefix=/usr/local
+          test -x staged/usr/local/bin/tmd
+          test -f staged/usr/local/share/man/man1/tmd.1
 
   netbsd:
     name: Tests (NetBSD)
@@ -347,33 +391,54 @@ jobs:
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
-      - name: Build and test in a NetBSD VM
-        uses: vmactions/netbsd-vm@eb3ba840926911ccf17dc9de235335cb27a02ba0 # v1.3.8
+      - name: Start the NetBSD VM
+        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        timeout-minutes: 15
         with:
-          release: "10.0"
-          usesh: true
-          # PKG_PATH spelled out because NetBSD's pkg_add has no default one,
-          # and x86_64 rather than amd64: the amd64 URL only resolves through a
-          # redirect that pkg_add does not follow reliably.
-          prepare: |
-            export PKG_PATH="https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/x86_64/10.0/All"
-            pkg_add -v bash gmake gtar xz zstd
-          run: |
-            set -e
-            uname -srm
-            cc --version | head -1
-            gmake --version | head -1
-            gtar --version | head -1
-            gmake build
-            gmake clean && gmake build WERROR=-Werror
-            gmake test-unit
-            gmake test-cli
-            gmake install DESTDIR="$PWD/staged" prefix=/usr/local
-            test -x staged/usr/local/bin/tmd
-            test -f staged/usr/local/share/man/man1/tmd.1
+          operating_system: netbsd
+          # 10.1, not 10.0: the 10.0 image under the other action never booted.
+          version: "10.1"
+
+      - name: Build and test
+        shell: cpa.sh {0}
+        run: |
+          set -e
+          # The image ships pkgin pointed at ftp.NetBSD.org over FTP, which
+          # routinely times out fetching pkg_summary.gz. Repoint it at the
+          # HTTPS CDN mirror, and retry: a single transient mirror blip should
+          # not be the reason a build did not happen.
+          REL="$(uname -r)"
+          echo "https://cdn.NetBSD.org/pub/pkgsrc/packages/NetBSD/amd64/${REL}/All" \
+            | sudo tee /usr/pkg/etc/pkgin/repositories.conf
+          n=0
+          until [ "$n" -ge 5 ]; do
+            sudo pkgin -y update && sudo pkgin -y install bash gmake gtar && break
+            n=$((n + 1))
+            echo "pkgin attempt $n failed; retrying in 15s..." >&2
+            sleep 15
+          done
+          sudo pkgin -y install xz zstd || true
+          for t in bash gmake gtar; do
+            command -v "$t" > /dev/null 2>&1 || {
+              echo "required tool not installed: $t" >&2
+              exit 1
+            }
+          done
+          uname -srm
+          cc --version | head -1
+          gmake --version | head -1
+          gtar --version | head -1
+          gmake build
+          gmake clean && gmake build WERROR=-Werror
+          gmake test-unit
+          gmake test-cli
+          gmake install DESTDIR="$PWD/staged" prefix=/usr/local
+          test -x staged/usr/local/bin/tmd
+          test -f staged/usr/local/share/man/man1/tmd.1
 
   # ==========================================================================
   # Separate from `test` because it is slow and because its failures are of a
