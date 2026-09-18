@@ -822,7 +822,12 @@ for 22.04 LTS as well as 24.04 and 26.04:
 
 - `-fstack-clash-protection` and `-fcf-protection=full` exist on x86 and not
   everywhere, so a hardening flag that stops the build on somebody's
-  architecture is worse than one that is absent there.
+  architecture is worse than one that is absent there. The probe compiles a real
+  object file, with `-Werror`, because arm64 macOS refuses those two in
+  different ways: `-fcf-protection` is rejected while setting up code
+  generation, which `-fsyntax-only` never reaches, and
+  `-fstack-clash-protection` is not rejected at all — clang accepts it, ignores
+  it, and mentions that in a warning. A probe that only parses says yes to both.
 - `_FORTIFY_SOURCE=3` needs GCC 12 or clang 9. 22.04 ships GCC 11, where glibc
   answers a request for level 3 with `#warning _FORTIFY_SOURCE > 2 is treated
   like 2 on this platform` — harmless until `-Werror` is on, and `-Werror` is on
@@ -929,7 +934,7 @@ big-endian leg would catch one and was
 multi-byte load in the program, so the property is true by construction, and an
 emulated leg runs too slowly to sit on every push.
 
-**Platforms.** Since v1.6.0.2 a `Tests (macOS)` job runs the whole thing on a
+**Platforms.** Since v1.6.0.3 a `Tests (macOS)` job runs the whole thing on a
 native macOS runner: build, `-Werror` build, both suites, a staged `make
 install`, and reading a real `.tar.gz` from a file and from a pipe. It is there
 because two things about the build were true only on Linux and nothing said so —
@@ -1228,7 +1233,7 @@ BSD half of that suite needs nothing installed, because on macOS the system
 `tar` *is* bsdtar.
 
 The other BSDs are not yet covered by CI and are
-[on the roadmap](ROADMAP.md#build-and-test-on-macos-and-the-bsds--the-macos-half-v1602).
+[on the roadmap](ROADMAP.md#build-and-test-on-macos-and-the-bsds--the-macos-half-v1603).
 
 ### Build the package yourself
 

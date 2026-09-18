@@ -104,7 +104,25 @@ WERROR      ?=
 # that stops the build on somebody's architecture is worse than one that is
 # absent there. `make security` checks the *binary* for the result, which is
 # what catches a flag that was accepted and did nothing.
-cc_supports = $(shell $(CC) $(1) -fsyntax-only -x c /dev/null > /dev/null 2>&1 && echo yes)
+#
+# The probe compiles a real translation unit, with -Werror, and both halves of
+# that are load-bearing. arm64 macOS demonstrated why, one failure each:
+#
+#   -fcf-protection=full is rejected while setting up code generation, not
+#   while parsing -- "option 'cf-protection=return' cannot be specified on this
+#   target" -- so -fsyntax-only never reaches the complaint and the probe said
+#   yes to a flag that then failed every object file.
+#
+#   -fstack-clash-protection is not rejected at all. clang accepts it, ignores
+#   it, and says so as a warning: "argument unused during compilation". Without
+#   -Werror the probe cannot tell that apart from a flag that worked, and the
+#   build carries a flag that does nothing while spending a warning per file --
+#   which the -Werror build in CI then turns into an error.
+#
+# The program is a bare `int main` including no headers, so -Werror here can
+# only be answered by a complaint about the flag being probed.
+cc_supports = $(shell printf 'int main(void){return 0;}' \
+                | $(CC) $(1) -Werror -x c - -c -o /dev/null > /dev/null 2>&1 && echo yes)
 
 TMD_HARDEN  := -fstack-protector-strong -fno-common
 TMD_HARDEN  += $(if $(call cc_supports,-fstack-clash-protection),-fstack-clash-protection)
