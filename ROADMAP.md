@@ -116,8 +116,10 @@ x86-64, where three things are true that are not true everywhere: little-endian,
 it costs no more than the x86 legs.
 
 It is still little-endian, so a genuine byte-order bug would survive it. The
-qemu-based big-endian leg the sketch asked for is slower by a factor of ten or
-more and belongs in a scheduled job rather than on every push, so it stays open.
+qemu-based big-endian leg the sketch asked for was left open at the time and has
+since been [declined](#a-big-endian-ci-leg): it is slower by a factor of ten or
+more, and the property it would test is true by construction rather than by
+luck — there is not a single multi-byte load in the program.
 
 The job asserts `uname -m` is aarch64 before doing anything else: a runner label
 that silently fell back to x86 would leave this reporting success while testing

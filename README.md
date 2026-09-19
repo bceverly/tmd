@@ -1146,6 +1146,17 @@ suites, installs, and then checks that `man tmd` resolves — because "a file wa
 written" and "man can find it" are different questions, and the answer differs
 by platform.
 
+**Installed by hand, from a clean clone, in September 2026:** macOS on a
+MacBook Air, FreeBSD, NetBSD, and OpenBSD on a ThinkPad T480 — `gmake build &&
+gmake install && man tmd && tmd` on each, with nothing installed beforehand but
+the packages the sections below name. That is worth recording separately from
+the table because CI runs the three BSDs inside QEMU guests, and those were
+real machines with real package sets.
+
+It is also dated, because it is a point-in-time check rather than something the
+build enforces. The table above is the part that is enforced: it re-runs on
+every push and fails the build when it stops being true.
+
 ### From the PPA — recommended on Ubuntu
 
 The packaged build is the one to use on **Ubuntu 22.04, 24.04 and 26.04 LTS**.
