@@ -721,17 +721,93 @@ bool tmd_link_escapes(const char *path, const char *target)
 }
 
 /*
- * find(1)'s rule, which is the one everybody already knows: a pattern with a
- * slash in it is matched against the whole stored path, a pattern without one
- * against the basename alone. So `nginx.conf` finds the file at any depth,
- * while a pattern like "etc/nginx/" followed by a star finds what is under that
- * directory. (Spelled out rather than written as a glob: the glob contains the
- * two characters that open a comment, and -Wcomment rightly objects.)
+ * Matching -m patterns, in two halves.
+ *
+ * A pattern without a slash follows find(1)'s rule and matches the basename
+ * alone, so `nginx.conf` finds the file at any depth. A pattern with a slash
+ * names a place in the tree and matches it and everything beneath it, the way
+ * tar does when given a member name -- see whole_path_matches below.
  *
  * Case-sensitive, because a tar path is a string of bytes: two members
  * differing only in case are two different members, and an archive can hold
  * both.
  */
+/*
+ * Past what extraction would strip: leading slashes and "./" components.
+ *
+ * GNU tar and bsdtar both write a member as "usr/local/x" whether the archive
+ * said "/usr/local/x", "./usr/local/x" or "usr/local/x", so to anybody asking
+ * for usr/local those are the same place. Package archives are where this
+ * bites: they are absolute or ./-prefixed from top to bottom, and a pattern
+ * that had to guess which spelling the writer chose found nothing until it
+ * guessed right.
+ */
+static const char *skip_leading(const char *s)
+{
+    for (;;)
+    {
+        if (s[0] == '/')
+        {
+            s++;
+        } else if (s[0] == '.' && s[1] == '/')
+        {
+            s += 2;
+        } else
+        {
+            return s;
+        }
+    }
+}
+
+/*
+ * A pattern with a slash in it names a place in the tree, and it matches that
+ * place and everything under it -- `usr/local/` and `usr/local` alike. That is
+ * what `tar -t usr/local` does, and it is what somebody typing a directory
+ * means. The first version matched the pattern against the whole path and
+ * nothing else, so "usr/local/" found the directory member and none of its
+ * contents, and the only way to get them was a trailing star that nobody
+ * thinks to type.
+ *
+ * fnmatch is called without FNM_PATHNAME, as it always has been here, so a
+ * star already crosses slashes: appending a slash and a star to the pattern is
+ * exactly "anything below".
+ */
+static bool whole_path_matches(const char *path, const char *pattern)
+{
+    const char *p = skip_leading(path);
+    const char *pat = skip_leading(pattern);
+    size_t      plen = strlen(p);
+    size_t      n = strlen(pat);
+    char       *core;
+    char       *below;
+    char       *member;
+    bool        hit;
+
+    while (n > 0 && pat[n - 1] == '/')
+    {
+        n--;
+    }
+    if (n == 0)
+    {
+        return true; /* "/" or "./": the whole tree */
+    }
+    /* A directory member is stored with its trailing slash, "usr/local/", and
+     * has to match the pattern "usr/local" as itself. */
+    while (plen > 0 && p[plen - 1] == '/')
+    {
+        plen--;
+    }
+
+    core = tmd_xstrndup(pat, n);
+    below = tmd_xasprintf("%s/*", core);
+    member = tmd_xstrndup(p, plen);
+    hit = fnmatch(core, member, 0) == 0 || fnmatch(below, p, 0) == 0;
+    free(core);
+    free(below);
+    free(member);
+    return hit;
+}
+
 bool tmd_path_matches(const char *path, const char *pattern)
 {
     char        stack[256];
@@ -743,7 +819,7 @@ bool tmd_path_matches(const char *path, const char *pattern)
 
     if (strchr(pattern, '/') != NULL)
     {
-        return fnmatch(pattern, path, 0) == 0;
+        return whole_path_matches(path, pattern);
     }
 
     /* A directory member is stored with a trailing slash ("etc/nginx/"), so its

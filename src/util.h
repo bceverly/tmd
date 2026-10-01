@@ -122,8 +122,9 @@ bool tmd_copy_fd(int from_fd, int to_fd, const void *prefix, size_t prefix_len);
 bool tmd_path_escapes(const char *path);
 bool tmd_link_escapes(const char *path, const char *target);
 
-/* find(1)'s matching rule: a pattern containing '/' is matched against the
- * whole path, one without it against the basename. Case-sensitive. */
+/* -m's matching rule: a pattern without '/' matches the basename, as find(1)
+ * does; one with '/' matches that path and everything under it, ignoring a
+ * leading "/" or "./" on either side, as tar does. Case-sensitive. */
 bool tmd_path_matches(const char *path, const char *pattern);
 
 void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11]);

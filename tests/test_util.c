@@ -337,6 +337,29 @@ static void test_path_matching(void)
     /* Without the slash rule this would match on the basename and be true. */
     CHECK(!tmd_path_matches("etc/nginx/nginx.conf", "nginx/*.txt"));
 
+    TEST_CASE("a directory pattern matches the directory and everything under it");
+    CHECK(tmd_path_matches("usr/local/", "usr/local/"));
+    CHECK(tmd_path_matches("usr/local/sbin/nginx", "usr/local/"));
+    CHECK(tmd_path_matches("usr/local/sbin/nginx", "usr/local"));
+    CHECK(tmd_path_matches("usr/local/", "usr/local"));
+    CHECK(tmd_path_matches("usr/local/etc/a/b/c.conf", "usr/*/etc"));
+    /* A component boundary, not a string prefix. */
+    CHECK(!tmd_path_matches("usr/localtime", "usr/local/"));
+    CHECK(!tmd_path_matches("usr/localtime", "usr/local"));
+    CHECK(!tmd_path_matches("usr/lib/x", "usr/local/"));
+
+    TEST_CASE("a leading / or ./ is ignored on either side, as extraction does");
+    CHECK(tmd_path_matches("/usr/local/sbin/nginx", "usr/local/"));
+    CHECK(tmd_path_matches("./usr/local/sbin/nginx", "usr/local/"));
+    CHECK(tmd_path_matches("usr/local/sbin/nginx", "/usr/local"));
+    CHECK(tmd_path_matches("usr/local/sbin/nginx", "./usr/local/"));
+    CHECK(tmd_path_matches(".//usr/local/x", "usr/local"));
+    CHECK(!tmd_path_matches("/usr/lib/x", "usr/local"));
+
+    TEST_CASE("a pattern of just / or ./ matches everything");
+    CHECK(tmd_path_matches("anything/at/all", "/"));
+    CHECK(tmd_path_matches("x", "./"));
+
     /*
      * A directory is stored with a trailing slash, so its basename is the
      * component before that slash. Getting this wrong makes every directory

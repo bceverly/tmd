@@ -49,7 +49,7 @@ TMD_OPT('v', "verbose",       no_argument,       NULL,
         "warn once per member with an absolute path, not once per archive")
 TMD_OPT('m', "match",         required_argument, "PATTERN",
         "show only members matching PATTERN; repeatable. A pattern with a '/' "
-        "matches the whole path, one without it the basename")
+        "matches that path and everything under it, one without it the basename")
 TMD_OPT(OPT_DIFF, "diff",     no_argument,       NULL,
         "compare two archives given with -f and report what changed")
 TMD_OPT(OPT_VERIFY, "verify", required_argument, "FILE",

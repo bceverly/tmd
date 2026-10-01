@@ -137,7 +137,7 @@ Options:
   -c, --check              check the archive for damage (checksums, truncation); exit 3 on any
   -q, --quiet              do not write warnings about damaged headers to standard error
   -v, --verbose            warn once per member with an absolute path, not once per archive
-  -m, --match=PATTERN      show only members matching PATTERN; repeatable. A pattern with a '/' matches the whole path, one without it the basename
+  -m, --match=PATTERN      show only members matching PATTERN; repeatable. A pattern with a '/' matches that path and everything under it, one without it the basename
       --diff               compare two archives given with -f and report what changed
       --verify=FILE        check the archive against a manifest of expected "SIZE PATH" lines
       --stat               report distributions instead of a listing: sizes, padding, and how the archive's timestamps are spread
@@ -230,15 +230,24 @@ $ tmd -f backup.tar -m nginx.conf
 -rw-r--r--  root/root    2604  2026-09-15 11:02:31Z  etc/nginx/nginx.conf   @884736
 ```
 
-`-m` / `--match` takes an fnmatch(3) glob and follows find(1)'s rule, which is
-the one everybody already knows:
+`-m` / `--match` takes an fnmatch(3) glob. A pattern without a `/` follows
+find(1)'s rule and matches the basename; one with a `/` follows tar's and
+matches that place in the tree and everything under it:
 
 | pattern | matches |
 |---|---|
 | `nginx.conf` | any member whose **basename** is exactly that, at any depth |
 | `*.conf` | any member whose basename ends in `.conf` |
-| `etc/nginx/*` | contains a `/`, so it matches against the **full stored path** |
-| `*/logs/*` | likewise |
+| `etc/nginx/` | contains a `/`, so it names a place in the tree: that directory **and everything under it** |
+| `etc/nginx` | the same — the trailing slash is optional |
+| `*/logs/*` | a glob over the full path; `*` crosses `/` |
+
+A pattern with a `/` matches the way `tar -t etc/nginx` selects members: the
+named path and everything beneath it, on a component boundary, so `usr/local`
+does not catch `usr/localtime`. A leading `/` or `./` is ignored on both sides,
+because that is what extraction strips — `usr/local/` finds the members of a
+package archive that stored them as `/usr/local/...` or `./usr/local/...`. The
+listing still shows each path exactly as the archive spells it.
 
 Case-sensitive, because a tar path is a string of bytes and two members
 differing only in case are two different members. Repeatable: `-m a.conf -m

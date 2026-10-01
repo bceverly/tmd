@@ -424,6 +424,18 @@ check_contains "a glob matches the basename" "$out" "big.bin"
 out="$("$TMD" -f gnu.tar -m 'tree/sub/*' 2>/dev/null)"
 check_contains "a pattern with a slash matches the whole path" "$out" "tree/sub/"
 
+# A directory pattern brings its contents with it, as `tar -t DIR` does --
+# with or without the trailing slash, and whatever leading "./" or "/" the
+# writer put on the path.
+out="$("$TMD" -f gnu.tar -m 'tree/sub/' 2>/dev/null)"
+check_contains "-m DIR/ lists what is under the directory" "$out" "tree/sub/big.bin"
+check_contains "-m DIR/ lists the directory itself" "$out" "tree/sub/ "
+out="$("$TMD" -f gnu.tar -m 'tree/sub' 2>/dev/null)"
+check_contains "-m DIR without the slash does the same" "$out" "tree/sub/big.bin"
+"$TAR" -cf dotslash.tar ./tree/hello.txt 2>/dev/null
+out="$("$TMD" -f dotslash.tar -m 'tree/' 2>/dev/null)"
+check_contains "-m ignores a leading ./ on the member" "$out" "./tree/hello.txt"
+
 out="$("$TMD" -f gnu.tar -m hello.txt -m '*.bin' 2>/dev/null)"
 check_contains "several -m patterns are an either/or (1)" "$out" "hello.txt"
 check_contains "several -m patterns are an either/or (2)" "$out" "big.bin"

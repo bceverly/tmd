@@ -223,6 +223,55 @@ which is also why
 redirects only the report. The file it creates is mode 0644, further masked by
 the umask \- so a stricter umask is honored, and a permissive one cannot leave
 an integrity report that anybody can rewrite.
+.SS Finding members
+.B \-m
+takes an
+.BR fnmatch (3)
+glob and narrows the listing to the members that match it. A pattern without a
+slash matches the basename, as
+.BR find (1)
+does:
+.B nginx.conf
+finds that file at any depth, and
+.B *.conf
+every member whose name ends that way.
+.PP
+A pattern with a slash names a place in the tree and matches it and everything
+under it, as
+.B tar \-t usr/local
+does:
+.B usr/local/
+and
+.B usr/local
+both select the directory and its contents, on a component boundary, so neither
+catches
+.BR usr/localtime .
+A leading
+.B /
+or
+.B ./
+is ignored on both the pattern and the member, because that is what extraction
+strips \- so
+.B usr/local/
+also finds the members of a package archive that stored them in the
+.B /usr/local/...
+or
+.B ./usr/local/...
+form.
+Each path is still listed exactly as the archive spells it. A
+.B *
+matches across slashes, so
+.B */logs/*
+finds a logs directory at any depth.
+.PP
+Matching is case\-sensitive, and
+.B \-m
+may be repeated to match any of several patterns. Every occurrence of a
+matching path is listed, with its byte offset, because an archive can hold the
+same path more than once and extraction keeps only the last. The summary keeps
+describing the whole archive and adds a
+.B matched
+line. When nothing matches, the exit status is 4.
 .SS Long form
 .B \-l
 prints every field of every member instead \- format, typeflag, both owner
