@@ -457,6 +457,19 @@ struct stats {
     int64_t  earliest;
     int64_t  latest;
     bool     have_time;
+    /*
+     * The same range, over the timestamps that could be real.
+     *
+     * A package manager stamps its own manifests with 0, and the epoch is what
+     * a writer emits when it has no time to give. Those are placeholders, and
+     * letting them into the range turned a package whose files all share one
+     * build second into "46 years of preserved per-file times" -- the opposite
+     * of what it is. earliest/latest above stay as the archive says, because
+     * that is a fact to report; these are what the inference reads.
+     */
+    int64_t  real_earliest;
+    int64_t  real_latest;
+    bool     have_real_time;
     uint64_t no_time;
     uint64_t zero_time;
     uint64_t negative_time;
@@ -519,6 +532,25 @@ static void stat_note_time(struct stats *s, const struct tmd_time *mt)
     } else if (mt->sec < TAR_EPOCH)
     {
         s->pre_tar_time++;
+    }
+    if (mt->sec >= TAR_EPOCH)
+    {
+        if (!s->have_real_time)
+        {
+            s->real_earliest = mt->sec;
+            s->real_latest = mt->sec;
+            s->have_real_time = true;
+        } else
+        {
+            if (mt->sec < s->real_earliest)
+            {
+                s->real_earliest = mt->sec;
+            }
+            if (mt->sec > s->real_latest)
+            {
+                s->real_latest = mt->sec;
+            }
+        }
     }
     if (mt->sec > (int64_t)time(NULL))
     {
@@ -1134,6 +1166,42 @@ static void csv_field(struct tmd_buf *b, const char *s)
     tmd_buf_addc(b, '"');
 }
 
+/*
+ * The bytes of a string as hex, but only when they are not valid UTF-8.
+ *
+ * CSV has no escape mechanism to borrow. JSON can say \u00XX and every parser
+ * agrees what that means; a CSV field is whatever bytes are in it, so a KOI8-R
+ * filename went out raw and a reader decoding the file as UTF-8 -- which is
+ * what nearly every one does -- lost it with no way back. Escaping inside the
+ * path column would invent a convention no CSV reader knows, and would change
+ * the column for every path containing a backslash.
+ *
+ * So the path column stays exactly as it was, and this column carries the
+ * lossless form beside it: empty for a path that is text, and two lowercase
+ * hex digits per byte for one that is not. Appended rather than inserted, so a
+ * reader that selects columns by position is unaffected.
+ */
+static void csv_hex(struct tmd_buf *b, const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    size_t               len;
+    size_t               i;
+
+    if (!s)
+    {
+        return;
+    }
+    len = strlen(s);
+    if (tmd_utf8_valid(s, len))
+    {
+        return;
+    }
+    for (i = 0; i < len; i++)
+    {
+        tmd_buf_addf(b, "%02x", p[i]);
+    }
+}
+
 static void csv_entry(struct tmd_render *rd, const struct tmd_entry *e)
 {
     struct tmd_buf b;
@@ -1159,7 +1227,10 @@ static void csv_entry(struct tmd_render *rd, const struct tmd_entry *e)
     csv_field(&b, stamp);
     tmd_buf_addf(&b, ",%lld,", (long long)(e->mtime.present ? e->mtime.sec : 0));
     csv_field(&b, e->linkpath);
-    tmd_buf_addf(&b, ",%s", e->chksum_ok ? "ok" : "bad");
+    tmd_buf_addf(&b, ",%s,", e->chksum_ok ? "ok" : "bad");
+    csv_hex(&b, e->path);
+    tmd_buf_addc(&b, ',');
+    csv_hex(&b, e->linkpath);
     tmd_buf_addc(&b, '\n');
 
     (void)fputs(b.data, rd->out);
@@ -2196,35 +2267,128 @@ static const struct stat_time *stat_modal(const struct stats *s)
  * date a tarball actually wants. Stated as an inference, not a verdict,
  * because it is one.
  */
-static const char *stat_verdict(const struct stats *s)
+/* Members whose mtime cannot be a real one: the epoch itself, anything before
+ * it, and anything before tar existed. See real_earliest in struct stats. */
+static uint64_t stat_placeholders(const struct stats *s)
 {
-    int64_t span;
+    return s->zero_time + s->negative_time + s->pre_tar_time;
+}
+
+/*
+ * How many distinct plausible timestamps there are, and how many members the
+ * commonest of them covers.
+ *
+ * Read back out of the table rather than counted on the way in, because which
+ * values are placeholders is a judgment the inference makes and the table
+ * should not. Meaningful only when the table did not overflow; the caller
+ * checks.
+ */
+static void stat_real_distinct(const struct stats *s, size_t *distinct,
+                               uint64_t *modal)
+{
+    size_t i;
+
+    *distinct = 0;
+    *modal = 0;
+    for (i = 0; i < STAT_TIME_SLOTS; i++)
+    {
+        if (!s->times[i].used || s->times[i].sec < TAR_EPOCH)
+        {
+            continue;
+        }
+        (*distinct)++;
+        if (s->times[i].count > *modal)
+        {
+            *modal = s->times[i].count;
+        }
+    }
+}
+
+/*
+ * The verdict, written into `buf` so that it can name counts. Returns NULL when
+ * the timestamps do not support one.
+ *
+ * Everything here reads the PLAUSIBLE timestamps. The first version read the
+ * raw range, and a package archive -- 21 files sharing one build second, plus
+ * two manifests the package tool dated at the epoch -- came out as "spread
+ * over months or more, preserved from a working tree", because 1970 to 2016 is
+ * a long time. The distinct count and the most-common line printed just above
+ * it said the opposite, correctly. So the placeholders are set aside and named,
+ * and a timestamp that nearly every member shares is read as the normalization
+ * it is, whatever a few outliers do to the range.
+ */
+static const char *stat_verdict(const struct stats *s, char *buf, size_t bufsz)
+{
+    uint64_t placeholders = stat_placeholders(s);
+    uint64_t dated = s->members - s->no_time;
+    uint64_t real = dated - placeholders;
+    char     aside[96];
+    size_t   distinct = 0;
+    uint64_t modal = 0;
+    int64_t  span;
 
     if (!s->have_time || s->members == 0)
     {
         return NULL;
     }
-    span = s->latest - s->earliest;
-
-    if (s->ndistinct == 1 && !s->distinct_overflow)
+    if (real == 0)
     {
-        if (s->zero_time)
+        if (s->zero_time == dated)
         {
-            return "every member is dated at the epoch — timestamps were "
-                   "discarded, not preserved";
+            (void)snprintf(buf, bufsz, "%s", "every member is dated at the "
+                           "epoch — timestamps were discarded, not preserved");
+            return buf;
         }
-        return "one timestamp for every member — normalized, as a reproducible "
-               "build does with SOURCE_DATE_EPOCH";
+        return NULL;
     }
-    if (!s->distinct_overflow && s->ndistinct <= 8 && span <= 3600)
+
+    /* What is being set aside, said in the verdict itself so that it cannot be
+     * read as having been missed. */
+    aside[0] = '\0';
+    if (placeholders > 0)
     {
-        return "a handful of timestamps within an hour — exported into a fresh "
-               "directory, then a few files regenerated";
+        (void)snprintf(aside, sizeof(aside), " but the %llu %s",
+                       (unsigned long long)placeholders,
+                       placeholders == s->zero_time ? "dated at the epoch"
+                                                    : "with placeholder dates");
+    }
+
+    span = s->real_latest - s->real_earliest;
+    if (!s->distinct_overflow)
+    {
+        stat_real_distinct(s, &distinct, &modal);
+    }
+
+    if (!s->distinct_overflow && distinct == 1)
+    {
+        (void)snprintf(buf, bufsz, "one timestamp for every member%s — "
+                       "normalized, as a reproducible build does with "
+                       "SOURCE_DATE_EPOCH", aside);
+        return buf;
+    }
+    if (!s->distinct_overflow && distinct <= 8 && span <= 3600)
+    {
+        (void)snprintf(buf, bufsz, "a handful of timestamps within an hour%s — "
+                       "exported into a fresh directory, then a few files "
+                       "regenerated", aside);
+        return buf;
+    }
+    /* Nine in ten on one second is a normalized archive with exceptions, not a
+     * preserved tree that happens to have a popular second. */
+    if (!s->distinct_overflow && modal * 10 >= real * 9)
+    {
+        (void)snprintf(buf, bufsz, "nearly every member shares one timestamp "
+                       "(%llu of %llu) — normalized, with a few files dated "
+                       "otherwise", (unsigned long long)modal,
+                       (unsigned long long)s->members);
+        return buf;
     }
     if (span >= INT64_C(86400) * 30)
     {
-        return "timestamps spread over months or more — real per-file times, "
-               "preserved from a working tree";
+        (void)snprintf(buf, bufsz, "timestamps spread over months or more%s — "
+                       "real per-file times, preserved from a working tree",
+                       aside);
+        return buf;
     }
     return NULL;
 }
@@ -2237,6 +2401,7 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
     char               stamp[64];
     char               span[64];
     const char        *verdict;
+    char               verdict_buf[256];
     size_t             i;
 
     (void)fprintf(out, "\n%s\n", a->name);
@@ -2294,6 +2459,27 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
     }
     span_string(s->latest - s->earliest, span, sizeof(span));
     (void)fprintf(out, "  %-14s%s\n", "span", span);
+    /* The raw span is what the archive says; when placeholder dates stretch
+     * it, the span of the dates that could be real is the one that means
+     * something, and it is said beside it rather than instead of it. */
+    if (stat_placeholders(s) > 0 && s->have_real_time)
+    {
+        uint64_t n = stat_placeholders(s);
+
+        /* span_string's wording for zero ("every member shares one second")
+         * is false here by construction -- the placeholders do not -- so a
+         * zero span is spelled as the number it is. */
+        if (s->real_latest == s->real_earliest)
+        {
+            (void)snprintf(span, sizeof(span), "%s", "0 seconds");
+        } else
+        {
+            span_string(s->real_latest - s->real_earliest, span, sizeof(span));
+        }
+        (void)fprintf(out, "  %-14s%s without the %llu placeholder date%s "
+                           "(the epoch, or before 1979)\n", "", span,
+                      (unsigned long long)n, n == 1 ? "" : "s");
+    }
 
     {
         const struct stat_time *modal = stat_modal(s);
@@ -2337,7 +2523,7 @@ static void text_stat(struct tmd_render *rd, const struct tmd_archive *a)
                       s->negative_time == 1 ? "" : "s");
     }
 
-    verdict = stat_verdict(s);
+    verdict = stat_verdict(s, verdict_buf, sizeof(verdict_buf));
     if (verdict)
     {
         (void)fprintf(out, "  %-14s%s\n", "produced by", verdict);
@@ -2385,6 +2571,13 @@ static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
         tmd_buf_addf(b, ", \"span_seconds\": %lld",
                      (long long)(s->latest - s->earliest));
     }
+    tmd_buf_addf(b, ", \"placeholder_dates\": %llu",
+                 (unsigned long long)stat_placeholders(s));
+    if (s->have_real_time)
+    {
+        tmd_buf_addf(b, ", \"real_span_seconds\": %lld",
+                     (long long)(s->real_latest - s->real_earliest));
+    }
     if (modal)
     {
         tmd_buf_addf(b, ", \"most_common_epoch\": %lld, \"most_common_count\": %llu",
@@ -2399,7 +2592,8 @@ static void json_stat(const struct tmd_render *rd, struct tmd_buf *b)
     tmd_buf_addc(b, '}');
 
     {
-        const char *verdict = stat_verdict(s);
+        char        verdict_buf[256];
+        const char *verdict = stat_verdict(s, verdict_buf, sizeof(verdict_buf));
 
         if (verdict)
         {
@@ -2457,7 +2651,7 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
         {
             (void)fputs("path,kind,mode_string,mode,format,uid,gid,uname,gname,"
                         "size,stored_size,offset,mtime,mtime_epoch,linkpath,"
-                        "checksum\n",
+                        "checksum,path_hex,linkpath_hex\n",
                         rd->out);
             rd->csv_header_written = true;
         }

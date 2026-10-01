@@ -348,6 +348,16 @@ static void test_output_formats(void)
     CHECK_CONTAINS(out, "path,kind,mode_string");
     CHECK_CONTAINS(out, "\"a,file\"\"with\nawkward,name\"");
     CHECK_CONTAINS(out, "2020-09-13T12:26:40Z");
+    CHECK_CONTAINS(out, ",checksum,path_hex,linkpath_hex\n");
+    /* A path that is text leaves both hex columns empty. */
+    CHECK_CONTAINS(out, ",ok,,\n");
+    free(out);
+
+    TEST_CASE("csv gives a non-UTF-8 path back as hex, losslessly");
+    make_entry(&e);
+    e.path = (char *)"\xf0\xd2\xc9\xd7\xc5\xd4.txt"; /* KOI8-R */
+    out = render_to_string(&opt, &a, &e, 1);
+    CHECK_CONTAINS(out, ",ok,f0d2c9d7c5d42e747874,\n");
     free(out);
 
     TEST_CASE("json carries the entry and the summary in one object");
@@ -892,6 +902,63 @@ static void test_stat_mode(void)
     e[0].mtime.sec = 100000; /* 1970 */
     out = render_to_string(&opt, &a, e, 4);
     CHECK_CONTAINS(out, "before tar existed");
+    free(out);
+
+    /*
+     * The package-archive case that got this wrong: the files share one build
+     * second and the package tool's own manifests are dated at the epoch. The
+     * raw range is 2016 back to 1970, and the inference used to read that as
+     * a preserved working tree.
+     */
+    TEST_CASE("epoch-dated members do not make a normalized archive look preserved");
+    for (i = 0; i < 4; i++)
+    {
+        e[i].mtime.sec = 1465400959; /* 2016-06-08 15:49:19Z */
+    }
+    e[0].mtime.sec = 0;
+    e[1].mtime.sec = 0;
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "span          46 years");
+    CHECK_CONTAINS(out, "0 seconds without the 2 placeholder dates");
+    CHECK_CONTAINS(out, "one timestamp for every member but the 2 dated at the epoch");
+    CHECK(strstr(out, "working tree") == NULL);
+    free(out);
+
+    TEST_CASE("--stat's JSON counts the placeholder dates and the real span");
+    opt.output = TMD_OUT_JSON;
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "\"placeholder_dates\": 2");
+    CHECK_CONTAINS(out, "\"real_span_seconds\": 0");
+    CHECK_CONTAINS(out, "but the 2 dated at the epoch");
+    free(out);
+    opt.output = TMD_OUT_TEXT;
+
+    TEST_CASE("nine in ten on one second is normalized, whatever the range says");
+    {
+        struct tmd_entry many[20];
+
+        for (i = 0; i < 20; i++)
+        {
+            make_entry(&many[i]);
+            many[i].offset = i * 1024;
+            many[i].mtime.sec = 1700000000;
+        }
+        /* One file two years older stretches the range past "months" and
+         * the distinct count past one; neither makes it a preserved tree. */
+        many[0].mtime.sec = 1700000000 - INT64_C(86400) * 730;
+        out = render_to_string(&opt, &a, many, 20);
+        CHECK_CONTAINS(out, "nearly every member shares one timestamp (19 of 20)");
+        CHECK(strstr(out, "working tree") == NULL);
+        free(out);
+    }
+
+    TEST_CASE("timestamps genuinely spread out still read as a preserved tree");
+    for (i = 0; i < 4; i++)
+    {
+        e[i].mtime.sec = 1600000000 + (int64_t)i * 86400 * 60;
+    }
+    out = render_to_string(&opt, &a, e, 4);
+    CHECK_CONTAINS(out, "preserved from a working tree");
     free(out);
 
     TEST_CASE("--stat reaches the JSON as its own object");

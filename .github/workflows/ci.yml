@@ -293,7 +293,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Start the FreeBSD VM
-        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        uses: cross-platform-actions/action@e0b9770014ba65d5e0815f15b74031c3a635f641 # v1.6.0
         # Bound the boot. When a guest image fails to come up the action retries
         # for as long as it is allowed to, with no attempt cap of its own, so a
         # dead VM eats the whole job budget before anyone is told. A healthy one
@@ -360,7 +360,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Start the OpenBSD VM
-        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        uses: cross-platform-actions/action@e0b9770014ba65d5e0815f15b74031c3a635f641 # v1.6.0
         timeout-minutes: 15
         with:
           operating_system: openbsd
@@ -426,12 +426,39 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Two attempts at the VM, because NetBSD is the guest that fails to come
+      # up for reasons that have nothing to do with this repository: on the
+      # Dependabot bump to v1.6.0 it died 38 seconds in -- before a boot could
+      # even have finished, let alone a line of ours run -- while FreeBSD and
+      # OpenBSD started fine under the same action in the same run.
+      #
+      # The first attempt is allowed to fail; the second runs only when it did,
+      # after a pause long enough for a transient image-download or mirror
+      # problem to clear. A failure that is not transient fails the second
+      # attempt the same way, so a real break still turns the job red -- it just
+      # costs one extra try rather than being reported on the first.
       - name: Start the NetBSD VM
-        uses: cross-platform-actions/action@24ef01df165c76df1ed2b9f9e9212e78dc2fc963 # v1.4.0
+        id: vm1
+        continue-on-error: true
+        uses: cross-platform-actions/action@e0b9770014ba65d5e0815f15b74031c3a635f641 # v1.6.0
         timeout-minutes: 15
         with:
           operating_system: netbsd
           # 10.1, not 10.0: the 10.0 image under the other action never booted.
+          version: "10.1"
+
+      - name: Wait before retrying the VM
+        if: steps.vm1.outcome == 'failure'
+        run: |
+          echo "::warning::the NetBSD VM did not start; retrying once in 60s"
+          sleep 60
+
+      - name: Start the NetBSD VM (retry)
+        if: steps.vm1.outcome == 'failure'
+        uses: cross-platform-actions/action@e0b9770014ba65d5e0815f15b74031c3a635f641 # v1.6.0
+        timeout-minutes: 15
+        with:
+          operating_system: netbsd
           version: "10.1"
 
       - name: Build and test
@@ -452,6 +479,14 @@ jobs:
             echo "pkgin attempt $n failed; retrying in 15s..." >&2
             sleep 15
           done
+          # Said outright when every attempt failed. Falling through left the
+          # tool check below to report "bash is not installed", which names the
+          # symptom and hides the cause: the mirror never answered.
+          if [ "$n" -ge 5 ]; then
+            echo "pkgin could not install bash, gmake and gtar after 5" \
+                 "attempts; the package mirror is unreachable" >&2
+            exit 1
+          fi
           sudo pkgin -y install xz zstd || true
           for t in bash gmake gtar; do
             command -v "$t" > /dev/null 2>&1 || {

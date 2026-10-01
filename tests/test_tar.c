@@ -525,6 +525,14 @@ static void test_damage(void)
     read_all(&rb, &tb);
     CHECK_INT(rb.count, 1);
     CHECK_CONTAINS(tmd_reader_archive(rb.reader)->warnings[0].text, "mid-header");
+    /* And the end marker is reported missing, exactly as it is when the cut
+     * lands in member data instead -- the same code either way. */
+    CHECK_INT(tmd_reader_archive(rb.reader)->nwarnings, 2);
+    if (tmd_reader_archive(rb.reader)->nwarnings == 2)
+    {
+        CHECK_STR(tmd_reader_archive(rb.reader)->warnings[1].code,
+                  "missing-end-marker");
+    }
     read_free(&rb);
     tb_free(&tb);
 

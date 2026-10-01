@@ -375,6 +375,9 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         case 'q':
             cli->options.quiet = true;
             break;
+        case 'v':
+            cli->options.verbose = true;
+            break;
         case 'm':
             /*
              * Repeatable, so the patterns accumulate. Bounded by argc for the

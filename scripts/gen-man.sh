@@ -248,6 +248,38 @@ A path in a tar archive is a string of bytes with no declared encoding. In JSON,
 paths that are valid UTF\-8 are emitted as themselves; anything else is escaped
 byte by byte as \eu00XX, which round\-trips through any parser and does not
 destroy the value the way replacing it with U+FFFD would.
+.PP
+Getting the bytes back takes one step that is easy to get wrong. Each \eu00XX
+is a code point standing for one byte, so the string is encoded as
+.B latin\-1
+\- code point to byte \- and not as UTF\-8, which would silently turn every
+high byte into two. Which applies is in
+.BR path_encoding.utf8 :
+.PP
+.RS
+.nf
+import json, sys
+for e in json.load(sys.stdin)["entries"]:
+    raw = e["path"].encode("utf\-8" if e["path_encoding"]["utf8"] else "latin\-1")
+    print(raw.decode("koi8\-r"))      # or whatever the writer used
+.fi
+.RE
+.PP
+CSV has no escape to borrow, so its
+.B path
+and
+.B linkpath
+columns carry the raw bytes, and two trailing columns,
+.B path_hex
+and
+.BR linkpath_hex ,
+carry the same bytes as hex whenever they are not valid UTF\-8 (and are empty
+when they are). Open the file so that a stray byte does not stop the parse \-
+in Python,
+.B errors="surrogateescape"
+\- and take
+.B bytes.fromhex(row["path_hex"])
+when it is not empty.
 .SH WHAT IS CHECKED
 .B \-c
 turns the reporting into a verdict. It exits 3 when a header's checksum does not
@@ -260,6 +292,15 @@ means calling a perfectly good archive corrupt.
 Damage that is not fatal is reported as a warning on standard error and the read
 continues: a single bad header does not stop the members after it from being
 listed.
+.PP
+A member that would extract outside the current directory is warned about too.
+Traversals and links that leave the tree are named one by one; absolute paths,
+which fill package archives from top to bottom, are reported as one line with a
+count, so that they do not bury the damage warnings around them.
+.B \-v
+lists them individually, and
+.B \-l
+and the JSON carry the warning on each member regardless.
 .SH LIMITATIONS
 .B tmd
 reads plain, uncompressed tar archives. A compressed archive is recognized and

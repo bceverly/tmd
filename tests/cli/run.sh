@@ -776,6 +776,24 @@ echo "archived by its absolute path" > absfile.txt
 if "$TAR" -cPf abs.tar "$PWD/absfile.txt" 2>/dev/null && [ -s abs.tar ]; then
   err="$("$TMD" -f abs.tar 2>&1 >/dev/null)"
   check_contains "an absolute path is reported" "$err" "absolute path"
+
+  # Counted on one line by default, so a package archive -- absolute from top
+  # to bottom -- does not bury everything else on stderr. Two members, so the
+  # count is a count and not a coincidence of one.
+  echo "a second absolute member" > absfile2.txt
+  if "$TAR" -cPf abs2.tar "$PWD/absfile.txt" "$PWD/absfile2.txt" 2>/dev/null; then
+    err="$("$TMD" -f abs2.tar 2>&1 >/dev/null)"
+    check "absolute paths are one stderr line, not one per member" \
+          "$(printf '%s\n' "$err" | count_lines)" "1"
+    check_contains "that line carries the count" "$err" "2 members have absolute paths"
+    err="$("$TMD" -f abs2.tar -v 2>&1 >/dev/null)"
+    check "-v lists every absolute path" \
+          "$(printf '%s\n' "$err" | grep -c 'absolute path:')" "2"
+    check "-q silences the absolute-path count too" \
+          "$("$TMD" -f abs2.tar -q 2>&1 >/dev/null)" ""
+  else
+    skip "absolute path count: this tar would not write the archive"
+  fi
 else
   skip "absolute paths: this tar would not write one"
 fi
@@ -1127,6 +1145,20 @@ err="$("$TMD" -f truncated.tar 2>&1 >/dev/null)"
 check_contains "a truncated archive warns on stderr" "$err" "end-of-archive"
 err="$("$TMD" -f truncated.tar -q 2>&1 >/dev/null)"
 check "-q silences the warnings" "$err" ""
+
+# Where a 3000-byte cut lands depends on the order tar's directory walk met the
+# files, which is the filesystem's choice: on one CI runner it split member
+# data, on another a header, and only the first of those mentioned the end
+# marker. So the header case is pinned here. The first member is the tree/
+# directory, which carries no data, so the second header starts at 512 on every
+# filesystem and a 600-byte cut always lands inside it.
+head_bytes 600 < gnu.tar > cut-header.tar
+err="$("$TMD" -f cut-header.tar 2>&1 >/dev/null)"
+check_contains "a cut through a header says so" "$err" "mid-header"
+check_contains "a cut through a header reports the missing end marker" \
+               "$err" "end-of-archive"
+"$TMD" -f cut-header.tar -c > /dev/null 2>&1
+check_status "-c fails on a cut through a header" "$?" 3
 
 # A flipped byte inside a header: the checksum must catch it.
 cp gnu.tar corrupt.tar

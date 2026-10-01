@@ -45,6 +45,8 @@ TMD_OPT('c', "check",         no_argument,       NULL,
         "check the archive for damage (checksums, truncation); exit 3 on any")
 TMD_OPT('q', "quiet",         no_argument,       NULL,
         "do not write warnings about damaged headers to standard error")
+TMD_OPT('v', "verbose",       no_argument,       NULL,
+        "warn once per member with an absolute path, not once per archive")
 TMD_OPT('m', "match",         required_argument, "PATTERN",
         "show only members matching PATTERN; repeatable. A pattern with a '/' "
         "matches the whole path, one without it the basename")

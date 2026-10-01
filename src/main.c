@@ -43,6 +43,24 @@ static void report_warnings(const struct tmd_archive *a, const struct tmd_entry 
     }
     for (i = 0; i < e->nwarnings; i++)
     {
+        /*
+         * Absolute paths are counted, not listed, unless -v asks.
+         *
+         * A package archive is absolute from top to bottom -- a 23-member one
+         * wrote 21 of these lines, which buried the -i report under them and
+         * made -q effectively mandatory, and -q also silences the damage
+         * warnings that are the reason to read stderr at all. So they become
+         * one line per archive (see report_absolute_paths). Traversals and
+         * links out of the tree are still named one by one: they are rare, and
+         * each is the member somebody needs to go and look at.
+         *
+         * Only stderr changes. -l and the JSON still carry the warning on the
+         * member it belongs to.
+         */
+        if (!opt->verbose && strcmp(e->warnings[i].code, "path-absolute") == 0)
+        {
+            continue;
+        }
         (void)fprintf(stderr, "tmd: %s: %s: %s\n", a->name,
                       e->path && e->path[0] ? e->path : "(unnamed member)",
                       e->warnings[i].text);
@@ -62,6 +80,23 @@ static void report_archive_warnings(const struct tmd_archive *a,
     {
         (void)fprintf(stderr, "tmd: %s: %s\n", a->name, a->warnings[i].text);
     }
+}
+
+/* The one line that stands in for every per-member absolute-path warning. */
+static void report_absolute_paths(const struct tmd_archive *a,
+                                  const struct tmd_options *opt)
+{
+    uint64_t n = a->features.escape_absolute;
+
+    if (opt->quiet || opt->verbose || n == 0)
+    {
+        return;
+    }
+    (void)fprintf(stderr, "tmd: %s: %llu member%s absolute path%s, extracting "
+                          "under / unless the leading slash is stripped "
+                          "(-v lists them)\n",
+                  a->name, (unsigned long long)n, n == 1 ? " has an" : "s have",
+                  n == 1 ? "" : "s");
 }
 
 /* Reads one archive into the renderer. Returns the exit status this archive
@@ -103,6 +138,10 @@ static int dump_archive(const char *path, struct tmd_render *rd,
         report_archive_warnings(archive, opt, warnings_reported);
         warnings_reported = archive->nwarnings;
     }
+    /* After the loop, so the count is the archive's whole count -- and before
+     * any verdict about how the read ended, which is the more important line
+     * and belongs last. */
+    report_absolute_paths(archive, opt);
 
     /*
      * The decompressor's verdict, which the reader cannot see.

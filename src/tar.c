@@ -1600,6 +1600,18 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                              "archive ends mid-header: %zu of %d bytes at offset %llu",
                              got, TMD_BLOCK_SIZE,
                              (unsigned long long)r->member_start);
+                /*
+                 * The marker is missing here too, and saying so is not
+                 * redundant. A cut that lands in member data gets this warning
+                 * from the branch above; one that lands in a header used to get
+                 * only the line before, so whether a truncated archive reported
+                 * a missing end marker depended on where the cut happened to
+                 * fall -- which is to say on the order the writer's readdir
+                 * returned the files, and the end-to-end test tripped over
+                 * exactly that on a CI runner whose filesystem ordered them
+                 * differently.
+                 */
+                warn_archive(r, "missing-end-marker", "archive ends without the two-block end-of-archive marker");
             }
             return end_of_archive(r);
         }

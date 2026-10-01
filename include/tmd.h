@@ -484,6 +484,7 @@ struct tmd_options {
     bool  full_time;    /* -T: seconds, nanoseconds and the zone offset    */
     bool  check;        /* -c: a checksum mismatch is an exit status       */
     bool  quiet;        /* -q: do not write warnings to stderr             */
+    bool  verbose;      /* -v: one stderr line per absolute path, too      */
     bool  color;        /* resolved from --color and isatty()              */
 
     /*
