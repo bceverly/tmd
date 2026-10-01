@@ -73,8 +73,19 @@ CPPFLAGS_ALL=(-Iinclude -Isrc "${TMD_FEATURES[@]}"
               -DTMD_VERSION="\"$VERSION\"")
 SAN=("-fsanitize=address,undefined" -fno-sanitize-recover=all
      -fno-omit-frame-pointer -O1 -g)
-# main.c is excluded: the fuzz target brings its own entry point.
-SOURCES=(src/util.c src/source.c src/tar.c src/render.c tests/fuzz/fuzz_tar.c)
+# Every program source except main.c, which is excluded because the fuzz target
+# brings its own entry point.
+#
+# Globbed rather than listed. The list was written by hand, and the first new
+# source file after it -- src/hash.c, which the reader calls -- broke the link
+# with nothing to say why except an undefined symbol. lint only syntax-checks
+# the fuzz target, so a missing file got past it; the glob makes "a new file in
+# src/" mean the same thing here as in the Makefile, which globs too.
+SOURCES=()
+for f in src/*.c; do
+  [ "$f" = src/main.c ] || SOURCES+=("$f")
+done
+SOURCES+=(tests/fuzz/fuzz_tar.c)
 
 # ---------------------------------------------------------------------------
 # Symbolization.

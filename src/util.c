@@ -849,6 +849,103 @@ bool tmd_path_matches(const char *path, const char *pattern)
     return hit;
 }
 
+bool tmd_options_filtering(const struct tmd_options *opt)
+{
+    return opt->nmatch > 0 || opt->have_mtime_before || opt->have_mtime_after;
+}
+
+bool tmd_entry_selected(const struct tmd_options *opt, const struct tmd_entry *e)
+{
+    size_t i;
+
+    if (opt->have_mtime_before || opt->have_mtime_after)
+    {
+        if (!e->mtime.present)
+        {
+            return false;
+        }
+        if (opt->have_mtime_before && e->mtime.sec >= opt->mtime_before)
+        {
+            return false;
+        }
+        if (opt->have_mtime_after && e->mtime.sec < opt->mtime_after)
+        {
+            return false;
+        }
+    }
+    if (opt->nmatch == 0)
+    {
+        return true;
+    }
+    for (i = 0; i < opt->nmatch; i++)
+    {
+        if (tmd_path_matches(e->path ? e->path : "", opt->match[i]))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * The extensions that mean "there is another archive in here".
+ *
+ * Containers only. A lone .gz is a compressed FILE, which is not the same
+ * finding: a .tar.gz is listed, and so is .tgz, but notes.txt.gz is not. The
+ * packages are in because a .deb is an ar archive with tarballs inside and an
+ * .rpm a cpio one -- exactly the nesting this is for.
+ */
+bool tmd_looks_like_archive(const char *path)
+{
+    static const char *const suffixes[] = {
+        ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lz4",
+        ".tar.lz", ".tar.lzma", ".tar.z", ".tgz", ".taz", ".tbz", ".tbz2",
+        ".txz", ".tzst", ".tlz", ".zip", ".jar", ".war", ".7z", ".rar",
+        ".cpio", ".deb", ".rpm", ".iso", ".cab", ".ar", ".a", ".apk", ".pkg",
+        ".xar", ".dmg", ".shar"
+    };
+    size_t len;
+    size_t i;
+
+    if (!path)
+    {
+        return false;
+    }
+    len = strlen(path);
+    for (i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); i++)
+    {
+        size_t n = strlen(suffixes[i]);
+        size_t k;
+        bool   same = true;
+
+        /* Longer than the suffix, so ".tar" alone -- a dotfile -- is not an
+         * archive, and nothing ending in a slash (a directory) can match. */
+        if (len <= n)
+        {
+            continue;
+        }
+        for (k = 0; k < n; k++)
+        {
+            char c = path[len - n + k];
+
+            if (c >= 'A' && c <= 'Z')
+            {
+                c = (char)(c - 'A' + 'a');
+            }
+            if (c != suffixes[i][k])
+            {
+                same = false;
+                break;
+            }
+        }
+        if (same && path[len - n - 1] != '/')
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11])
 {
     static const char rwx[8][4] = { "---", "--x", "-w-", "-wx",

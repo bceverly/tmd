@@ -78,5 +78,6 @@ void test_source(void);
 void test_tar(void);
 void test_pax(void);
 void test_render(void);
+void test_hash(void);
 
 #endif /* TMD_TEST_H */

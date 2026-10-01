@@ -127,6 +127,23 @@ bool tmd_link_escapes(const char *path, const char *target);
  * leading "/" or "./" on either side, as tar does. Case-sensitive. */
 bool tmd_path_matches(const char *path, const char *pattern);
 
+/*
+ * Does the command line select this member?
+ *
+ * One answer for everything that asks: the listing, --stat, --hash (which reads
+ * the content of exactly the members selected, and no others) and --diff. -m
+ * and the date range are ANDed: a member has to match a pattern, when there are
+ * any, and fall inside the range, when there is one.
+ */
+bool tmd_entry_selected(const struct tmd_options *opt, const struct tmd_entry *e);
+/* True when anything narrows the selection -- a pattern or a date bound -- and
+ * so "nothing was selected" is an answer worth an exit status. */
+bool tmd_options_filtering(const struct tmd_options *opt);
+
+/* Does this name look like an archive or a package in its own right? By
+ * extension only, and case-insensitively; it is a hint about where to look. */
+bool tmd_looks_like_archive(const char *path);
+
 void tmd_mode_string(uint32_t mode, enum tmd_kind kind, char out[11]);
 
 /* 1.4K / 23.7M / 4.0G, to three significant figures. */

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "hash.h"
 #include "tar.h"
 #include "util.h"
 
@@ -47,6 +48,9 @@ struct tmd_render {
 
     /* --stat: allocated only when asked for; it is a few hundred kilobytes. */
     struct stats             *stat;
+
+    /* --manifest: members whose path no manifest line can carry. */
+    uint64_t                  manifest_skipped;
 };
 
 /* Past this many held members, say so once. Not a limit -- truncating a
@@ -368,6 +372,18 @@ char *tmd_render_listing_line(const struct tmd_entry *e,
     format_time(&e->mtime, opt, when, sizeof(when));
 
     tmd_buf_addf(&line, "%s  %-17s %10s  %-20s  ", mode, owner, size, when);
+    /*
+     * --hash puts the digest in a column of its own, before the path, the way
+     * md5sum and sha256sum do: the path stays last, so `awk '{print $NF}'`
+     * still finds it, and the digests line up for the eye. A member with no
+     * content -- or none that could be read -- gets a dash, never a blank, so
+     * the columns do not shift.
+     */
+    if (opt->hash != TMD_HASH_NONE)
+    {
+        tmd_buf_addf(&line, "%-*s  ", (int)tmd_hash_hex_len(opt->hash),
+                     e->content_hashed ? e->content_hash : "-");
+    }
 
     color = entry_color(e, opt);
     if (color)
@@ -1001,6 +1017,26 @@ static void json_entry(struct tmd_render *rd, const struct tmd_entry *e)
         tmd_buf_addstr(&b, "null}");
     }
 
+    /* Present whenever --hash was asked for, null for a member that has no
+     * content or whose content could not all be read: absent would read as
+     * "not asked". */
+    if (opt->hash != TMD_HASH_NONE)
+    {
+        if (e->content_hashed)
+        {
+            tmd_buf_addf(&b, ", \"content_hash\": {\"algorithm\": \"%s\", "
+                             "\"digest\": \"%s\"}",
+                         tmd_hash_name(opt->hash), e->content_hash);
+        } else
+        {
+            tmd_buf_addstr(&b, ", \"content_hash\": null");
+        }
+    }
+    if (e->nested_archive)
+    {
+        tmd_buf_addstr(&b, ", \"nested_archive\": true");
+    }
+
     if (e->npax > 0)
     {
         tmd_buf_addstr(&b, ", \"pax\": {");
@@ -1231,6 +1267,13 @@ static void csv_entry(struct tmd_render *rd, const struct tmd_entry *e)
     csv_hex(&b, e->path);
     tmd_buf_addc(&b, ',');
     csv_hex(&b, e->linkpath);
+    /* "md5:<hex>", so the column says which digest it is without a second
+     * column to say so; empty when nothing was hashed. */
+    tmd_buf_addc(&b, ',');
+    if (e->content_hashed && rd->opt->hash != TMD_HASH_NONE)
+    {
+        tmd_buf_addf(&b, "%s:%s", tmd_hash_name(rd->opt->hash), e->content_hash);
+    }
     tmd_buf_addc(&b, '\n');
 
     (void)fputs(b.data, rd->out);
@@ -1303,6 +1346,15 @@ static void text_long_entry(struct tmd_render *rd, const struct tmd_entry *e)
     (void)fprintf(out, "  path from   %s\n",
                   e->path_source ? e->path_source : "header");
 
+    if (opt->hash != TMD_HASH_NONE)
+    {
+        (void)fprintf(out, "  %-11s %s\n", tmd_hash_name(opt->hash),
+                      e->content_hashed ? e->content_hash : "- (no content read)");
+    }
+    if (e->nested_archive)
+    {
+        (void)fprintf(out, "  nested      the name says this is an archive itself\n");
+    }
     (void)fprintf(out, "  checksum    %s (stored %06o, computed %06o)\n",
                   e->chksum_ok ? "ok" : "MISMATCH", e->chksum_stored,
                   e->chksum_unsigned);
@@ -1629,9 +1681,64 @@ static void print_extraction(FILE *out, const struct tmd_archive *a, int width)
     tmd_buf_free(&parts);
 }
 
+/*
+ * The owners, most members first.
+ *
+ * The tally keeps them in the order they first appeared, which is a fact about
+ * the archive but not the useful order to read them in. Sorted into an index
+ * here rather than in place, because the archive record is the reader's and is
+ * const to everything downstream of it. At most 64, so a selection sort is
+ * plenty and needs no comparator context.
+ */
+static size_t owners_by_count(const struct tmd_features *f, size_t order[64])
+{
+    size_t i;
+    size_t j;
+
+    for (i = 0; i < f->nowners; i++)
+    {
+        order[i] = i;
+    }
+    for (i = 0; i < f->nowners; i++)
+    {
+        size_t best = i;
+
+        for (j = i + 1; j < f->nowners; j++)
+        {
+            if (f->owners[order[j]].count > f->owners[order[best]].count)
+            {
+                best = j;
+            }
+        }
+        if (best != i)
+        {
+            size_t t = order[i];
+
+            order[i] = order[best];
+            order[best] = t;
+        }
+    }
+    return f->nowners;
+}
+
+/* "content read     no -- headers only", or which digest and how many. */
+static void text_content_read(FILE *out, const struct tmd_archive *a, int width)
+{
+    if (a->hash == TMD_HASH_NONE)
+    {
+        (void)fprintf(out, "  %-*sno — headers only; member data was skipped\n",
+                      width, "content read");
+        return;
+    }
+    (void)fprintf(out, "  %-*syes — %s of %llu member%s, so timings are not "
+                       "comparable with a headers-only read\n",
+                  width, "content read", tmd_hash_name(a->hash),
+                  (unsigned long long)a->hashed, a->hashed == 1 ? "" : "s");
+}
+
 static void text_matched_line(struct tmd_render *rd, int label_width)
 {
-    if (rd->opt->nmatch == 0)
+    if (!tmd_options_filtering(rd->opt))
     {
         return;
     }
@@ -1667,6 +1774,7 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
                       tmd_human_size(a->file_size, human, sizeof(human)));
     }
 
+    text_content_read(out, a, 17);
     (void)fprintf(out, "  format           %s\n", format_long_name(a->format));
     (void)fprintf(out, "  generation       %s\n", generation_name(a->format));
     (void)fprintf(out, "                   %s\n", generation_note(a->format));
@@ -1796,6 +1904,41 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
     (void)fprintf(out, "  ownership        %s; highest uid %lld, gid %lld\n",
                   f->names_present ? "names and numbers" : "numbers only (no names stored)",
                   (long long)f->max_uid, (long long)f->max_gid);
+    /*
+     * Who owns what, most members first. The question on a backup of a
+     * multi-user system -- and the line that shows one user's files sitting in
+     * another's home directory, which nothing member by member does.
+     */
+    if (f->nowners > 0)
+    {
+        size_t         order[64];
+        size_t         n = owners_by_count(f, order);
+        size_t         more = n > 8 ? n - 8 : 0;
+        size_t         shown = n - more;
+        size_t         i;
+        struct tmd_buf list;
+
+        tmd_buf_init(&list);
+        for (i = 0; i < shown; i++)
+        {
+            tmd_buf_addf(&list, "%s%s (%llu)", i ? ", " : "",
+                         f->owners[order[i]].owner,
+                         (unsigned long long)f->owners[order[i]].count);
+        }
+        if (more > 0)
+        {
+            tmd_buf_addf(&list, ", and %zu more", more);
+        }
+        if (f->owners_untallied)
+        {
+            tmd_buf_addf(&list, "; past %zu distinct, %llu more member%s not "
+                                "tallied", n,
+                         (unsigned long long)f->owners_untallied,
+                         f->owners_untallied == 1 ? "" : "s");
+        }
+        (void)fprintf(out, "  owners           %s\n", list.data ? list.data : "");
+        tmd_buf_free(&list);
+    }
 
     /* --- physical layout -------------------------------------------------- */
     if (a->record_blocks)
@@ -1898,6 +2041,29 @@ static void text_info(struct tmd_render *rd, const struct tmd_archive *a)
                            "marker above\n");
     }
 
+    if (f->nested_archives)
+    {
+        size_t         i;
+        struct tmd_buf list;
+
+        tmd_buf_init(&list);
+        for (i = 0; i < f->nnested_examples; i++)
+        {
+            tmd_buf_addf(&list, "%s%s", i ? ", " : "", f->nested_examples[i]);
+        }
+        if (f->nested_archives > f->nnested_examples)
+        {
+            tmd_buf_addstr(&list, ", ...");
+        }
+        (void)fprintf(out, "  nested archives  %llu member%s look%s like an archive "
+                           "by name: %s\n",
+                      (unsigned long long)f->nested_archives,
+                      f->nested_archives == 1 ? "" : "s",
+                      f->nested_archives == 1 ? "s" : "",
+                      list.data ? list.data : "");
+        tmd_buf_free(&list);
+    }
+
     if (f->unknown_typeflags)
     {
         (void)fprintf(out, "  unknown types    %llu member%s carry a typeflag this "
@@ -1957,6 +2123,10 @@ static void text_summary(struct tmd_render *rd, const struct tmd_archive *a)
         (void)fprintf(out, "  written by    %s (inferred)\n", a->writer);
     }
 
+    if (a->hash != TMD_HASH_NONE)
+    {
+        text_content_read(out, a, 14);
+    }
     text_matched_line(rd, 14);
     (void)fprintf(out, "  members       %llu\n", (unsigned long long)a->entries);
     if (a->counts[TMD_KIND_FILE])
@@ -2053,7 +2223,16 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
         tmd_json_escape(&b, a->writer);
     }
     tmd_buf_addf(&b, ", \"members\": %llu", (unsigned long long)a->entries);
-    if (rd->opt->nmatch > 0)
+    /* Always present: whether a timing taken of this run measured header reads
+     * or content reads is the first thing anybody comparing two should check. */
+    tmd_buf_addf(&b, ", \"content_read\": %s",
+                 a->hash != TMD_HASH_NONE ? "true" : "false");
+    if (a->hash != TMD_HASH_NONE)
+    {
+        tmd_buf_addf(&b, ", \"hash_algorithm\": \"%s\", \"hashed_members\": %llu",
+                     tmd_hash_name(a->hash), (unsigned long long)a->hashed);
+    }
+    if (tmd_options_filtering(rd->opt))
     {
         tmd_buf_addf(&b, ", \"matched\": %llu", (unsigned long long)rd->matched);
     }
@@ -2165,7 +2344,27 @@ static void json_summary(struct tmd_render *rd, const struct tmd_archive *a)
             }
             tmd_json_escape(&b, f->pax_keys[i]);
         }
-        tmd_buf_addstr(&b, "]}");
+        tmd_buf_addstr(&b, "]");
+
+        tmd_buf_addstr(&b, ", \"owners\": [");
+        {
+            size_t order[64];
+            size_t n = owners_by_count(f, order);
+
+            for (i = 0; i < n; i++)
+            {
+                tmd_buf_addstr(&b, i ? ", {\"owner\": " : "{\"owner\": ");
+                tmd_json_escape(&b, f->owners[order[i]].owner);
+                tmd_buf_addf(&b, ", \"members\": %llu}",
+                             (unsigned long long)f->owners[order[i]].count);
+            }
+        }
+        tmd_buf_addf(&b, "], \"owners_untallied\": %llu",
+                     (unsigned long long)f->owners_untallied);
+
+        tmd_buf_addf(&b, ", \"nested_archives\": %llu",
+                     (unsigned long long)f->nested_archives);
+        tmd_buf_addstr(&b, "}");
     }
 
     if (rd->opt->stats && rd->stat)
@@ -2651,12 +2850,30 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
         {
             (void)fputs("path,kind,mode_string,mode,format,uid,gid,uname,gname,"
                         "size,stored_size,offset,mtime,mtime_epoch,linkpath,"
-                        "checksum,path_hex,linkpath_hex\n",
+                        "checksum,path_hex,linkpath_hex,content_hash\n",
                         rd->out);
             rd->csv_header_written = true;
         }
         break;
     case TMD_OUT_TEXT:
+        /*
+         * A manifest says what it is in comment lines, which --verify skips.
+         * No date and nothing else that varies between runs: the same archive
+         * has to produce the same manifest, byte for byte, or comparing two
+         * manifests stops meaning anything.
+         */
+        if (rd->opt->manifest)
+        {
+            (void)fprintf(rd->out, "# tmd manifest: \"SIZE %sPATH\", one member "
+                                   "per line; check with tmd --verify\n",
+                          rd->opt->hash != TMD_HASH_NONE ? "ALGO:DIGEST " : "");
+            /* The name is the caller's, and a newline in it would end the
+             * comment and start a line --verify reads as a member. */
+            (void)fprintf(rd->out, "# archive: %s\n",
+                          strpbrk(a->name, "\n\r") ? "(a name with a newline in it)"
+                                                    : a->name);
+            break;
+        }
         /* A banner only when there is more than one archive to tell apart.
          * With one, the listing is the whole output and a header would just be
          * something a pipeline has to strip. */
@@ -2670,23 +2887,11 @@ void tmd_render_archive_begin(struct tmd_render *rd, const struct tmd_archive *a
     rd->archive_index++;
 }
 
-/* True when no -m was given, or when one of the patterns matches. */
+/* The command line's selection: -m and the date range. One definition, in
+ * util.c, shared with --hash and --diff so that all three agree. */
 static bool entry_selected(const struct tmd_render *rd, const struct tmd_entry *e)
 {
-    size_t i;
-
-    if (rd->opt->nmatch == 0)
-    {
-        return true;
-    }
-    for (i = 0; i < rd->opt->nmatch; i++)
-    {
-        if (tmd_path_matches(e->path, rd->opt->match[i]))
-        {
-            return true;
-        }
-    }
-    return false;
+    return tmd_entry_selected(rd->opt, e);
 }
 
 static void render_one(struct tmd_render *rd, const struct tmd_entry *e);
@@ -2755,8 +2960,51 @@ void tmd_render_entry(struct tmd_render *rd, const struct tmd_entry *e)
     render_one(rd, e);
 }
 
+/*
+ * One manifest line: "SIZE PATH", or "SIZE ALGO:DIGEST PATH" under --hash --
+ * exactly what --verify reads back.
+ *
+ * The format is line-based and the path is the rest of the line, so two kinds
+ * of path cannot be written: one containing a newline, which would become two
+ * lines, and one beginning with a space or tab, which the reader strips. Both
+ * are refused out loud rather than written in a form that verifies as a
+ * different path. Neither is a name anybody chooses, which is the point of
+ * saying so: an archive carrying one is worth a second look.
+ */
+static void manifest_line(struct tmd_render *rd, const struct tmd_entry *e)
+{
+    const char *path = e->path ? e->path : "";
+
+    if (strpbrk(path, "\n\r") != NULL || path[0] == ' ' || path[0] == '\t' ||
+        path[0] == '\0')
+    {
+        rd->manifest_skipped++;
+        if (!rd->opt->quiet)
+        {
+            (void)fprintf(stderr, "tmd: member at offset %llu: its path cannot be "
+                                  "written as a manifest line (empty, a newline in "
+                                  "it, or leading whitespace); left out\n",
+                          (unsigned long long)e->offset);
+        }
+        return;
+    }
+    if (e->content_hashed && rd->opt->hash != TMD_HASH_NONE)
+    {
+        (void)fprintf(rd->out, "%llu %s:%s %s\n", (unsigned long long)e->size,
+                      tmd_hash_name(rd->opt->hash), e->content_hash, path);
+    } else
+    {
+        (void)fprintf(rd->out, "%llu %s\n", (unsigned long long)e->size, path);
+    }
+}
+
 static void render_one(struct tmd_render *rd, const struct tmd_entry *e)
 {
+    if (rd->opt->manifest)
+    {
+        manifest_line(rd, e);
+        return;
+    }
     switch (rd->opt->output)
     {
     case TMD_OUT_JSON:

@@ -22,6 +22,7 @@
 #include "source.h"
 #include "tar.h"
 #include "tmd.h"
+#include "util.h"
 
 /*
  * Warnings go to standard error, always.
@@ -82,6 +83,12 @@ static void report_archive_warnings(const struct tmd_archive *a,
     }
 }
 
+/* --hash reads the content of exactly the members the listing will show. */
+static bool want_member(const struct tmd_entry *e, const void *ctx)
+{
+    return tmd_entry_selected((const struct tmd_options *)ctx, e);
+}
+
 /* The one line that stands in for every per-member absolute-path warning. */
 static void report_absolute_paths(const struct tmd_archive *a,
                                   const struct tmd_options *opt)
@@ -125,6 +132,10 @@ static int dump_archive(const char *path, struct tmd_render *rd,
     /* -R reports the raw blocks, so the reader has to keep them; nothing else
      * pays for that. */
     tmd_reader_capture_raw(reader, opt->headers);
+    if (opt->hash != TMD_HASH_NONE)
+    {
+        tmd_reader_hash(reader, opt->hash, want_member, opt);
+    }
     archive = tmd_reader_archive(reader);
     tmd_render_archive_begin(rd, archive);
 
@@ -321,7 +332,7 @@ int main(int argc, char **argv)
      * archive, so `tmd -f a.tar -f b.tar -m x` is satisfied by a match in
      * either.
      */
-    if (status == TMD_EXIT_OK && cli.options.nmatch > 0 &&
+    if (status == TMD_EXIT_OK && tmd_options_filtering(&cli.options) &&
         tmd_render_matched(rd) == 0)
     {
         status = TMD_EXIT_NOMATCH;

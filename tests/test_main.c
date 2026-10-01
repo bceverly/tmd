@@ -77,6 +77,7 @@ int main(void)
     test_tar();
     test_pax();
     test_render();
+    test_hash();
 
     if (report)
     {

@@ -67,8 +67,16 @@ check() {
   fi
 }
 
+# Matched in the shell, with no pipeline, on purpose. This was
+#   printf '%s' "$2" | grep -qF -- "$3"
+# and grep -q exits at its first match. When the match was not on the last line,
+# printf could still be writing, took SIGPIPE, and under pipefail the pipeline
+# failed -- so a check whose output plainly contained the text reported that it
+# did not. Timing-dependent, which is why it surfaced only under the slower
+# sanitizer build, on a check whose match was on the first of two lines. The
+# same shape is avoided everywhere below: capture first, then match.
 check_contains() {
-  if printf '%s' "$2" | grep -qF -- "$3"; then
+  if [[ "$2" == *"$3"* ]]; then
     ok "$1"
   else
     bad "$1"
@@ -105,9 +113,11 @@ printf '\ntmd end-to-end tests\n'
 # --no-recursion are GNU spellings, and the archives they produce are the
 # reference this suite checks tmd against. On macOS and the BSDs `tar` IS
 # bsdtar, and GNU tar is a package installed as `gtar`.
-if command -v gtar > /dev/null 2>&1 && gtar --version 2>&1 | grep -q 'GNU tar'; then
+# (Captured, then matched -- see check_contains for why not `| grep -q`. Here a
+# false miss would not fail a check, it would decide there is no GNU tar.)
+if command -v gtar > /dev/null 2>&1 && [[ "$(gtar --version 2>&1)" == *"GNU tar"* ]]; then
   TAR=gtar
-elif tar --version 2>&1 | grep -q 'GNU tar'; then
+elif [[ "$(tar --version 2>&1)" == *"GNU tar"* ]]; then
   TAR=tar
 else
   printf '\033[91mrun.sh: GNU tar is required to build the fixtures\033[0m\n' >&2
@@ -125,7 +135,8 @@ fi
 if command -v bsdtar > /dev/null 2>&1; then
   BSDTAR=bsdtar
   HAVE_BSDTAR=1
-elif tar --version 2>&1 | grep -qi 'bsdtar\|libarchive'; then
+elif tar_version="$(tar --version 2>&1)" &&
+     grep -qi 'bsdtar\|libarchive' <<< "$tar_version"; then
   BSDTAR=tar
   HAVE_BSDTAR=1
 else
@@ -408,7 +419,7 @@ printf '\n\033[1;94m▸ -m, the member filter\033[0m\n'
 
 out="$("$TMD" -f gnu.tar -m hello.txt 2>/dev/null)"
 check_contains "a bare name matches the basename at any depth" "$out" "tree/hello.txt"
-if printf '%s' "$out" | grep -q 'big.bin'; then
+if grep -q 'big.bin' <<< "$out"; then
   bad "-m let through a member that does not match"
 else
   ok "-m keeps out what does not match"
@@ -643,7 +654,7 @@ check_status "a manifest that disagrees exits 5" "$?" 5
 # because the fixture was called sizeless.txt.
 printf -- '- dtree/keep.txt\n' > nosize.txt
 out="$("$TMD" -f old.tar --verify=nosize.txt 2>/dev/null)"
-if printf '%s' "$out" | grep -q '^~ dtree/keep.txt'; then
+if grep -q '^~ dtree/keep.txt' <<< "$out"; then
   bad "a sizeless manifest line still checked the size"
 else
   ok "a sizeless manifest line checks only that the path is there"
@@ -738,7 +749,8 @@ else
 fi
 
 # Without -R there is nothing to report and nothing is paid for it.
-if "$TMD" -f gnu.tar -t JSON 2>/dev/null | grep -q 'extension_blocks'; then
+json_out="$("$TMD" -f gnu.tar -t JSON 2>/dev/null)"
+if [[ "$json_out" == *extension_blocks* ]]; then
   bad "extension blocks were emitted without -R"
 else
   ok "extension blocks are only emitted under -R"
@@ -846,7 +858,7 @@ check_contains "--stat reports the padding" "$out" "padding"
 check_contains "--stat lists the largest members" "$out" "largest"
 
 # It replaces the listing rather than adding to it.
-if printf '%s' "$out" | grep -q 'rel/one'; then
+if grep -q 'rel/one' <<< "$out"; then
   ok "--stat lists the largest members by path"
 else
   bad "--stat did not name any member"
@@ -997,6 +1009,109 @@ tar_rows=$("$TAR" -tf gnu.tar | count_lines)
 check "csv has one row per member" "$csv_rows" "$tar_rows"
 
 # ---------------------------------------------------------------------------
+printf '\n\033[1;94m▸ --hash, --manifest and the date range\033[0m\n'
+
+# A fixture of its own. The shared tree has a hard link in it, and a hard link
+# carries no content to hash -- nor can one of the pair be changed without
+# changing the other -- so these checks use two plain files and a directory.
+# Fixed dates throughout, so that rebuilding the archive after an edit changes
+# only what the edit changed.
+mkdir -p htree/dir
+printf 'alpha\n' > htree/a.txt
+printf 'bravo bravo\n' > htree/dir/b.txt
+touch_epoch 1200000000 htree/a.txt                  # 2008
+touch_epoch 1700000000 htree/dir/b.txt htree/dir htree  # 2023
+"$TAR" --format=gnu -cf h.tar htree 2>/dev/null
+
+# The digests are checked against an independent implementation: python3's
+# hashlib, which is everywhere this suite runs that has python3 at all. md5sum
+# would be simpler and is not portable -- macOS and the BSDs spell it md5, with
+# different output -- and a digest checked against tmd's own output proves
+# nothing.
+if command -v python3 > /dev/null 2>&1; then
+  for algo in md5 sha256; do
+    want="$(python3 -c "import hashlib,sys; print(hashlib.$algo(open(sys.argv[1],'rb').read()).hexdigest())" htree/dir/b.txt)"
+    got="$("$TMD" -f h.tar --hash=$algo -m b.txt 2>/dev/null | awk '{print $(NF-2)}')"
+    check "--hash=$algo agrees with an independent implementation" "$want" "$got"
+  done
+  # The sparse fixture is ten million bytes of hole. The archive stores almost
+  # none of them; the digest has to cover every one, as zeros.
+  if [ -f sparse-gnu.tar ]; then
+    want="$(python3 -c "import hashlib; print(hashlib.sha256(bytes(10000000)).hexdigest())")"
+    got="$("$TMD" -f sparse-gnu.tar --hash=sha256 -t CSV 2>/dev/null | tail -n +2 | awk -F, '{print $NF}')"
+    check "a sparse member hashes as the file it extracts to" "sha256:$want" "$got"
+  else
+    skip "sparse hashing: no sparse archive was built"
+  fi
+else
+  skip "--hash digests: no python3 to check them against"
+fi
+
+out="$("$TMD" -f h.tar --hash=md5 -m b.txt -i 2>/dev/null)"
+check_contains "-i says content was read under --hash" "$out" "content read     yes — md5 of 1 member"
+out="$("$TMD" -f h.tar -i 2>/dev/null)"
+check_contains "-i says only headers were read otherwise" "$out" "content read     no"
+out="$("$TMD" -f h.tar --hash=md5 -m htree/dir 2>/dev/null)"
+if grep -qE '  -  +htree/dir/ ' <<< "$out"; then
+  ok "a directory gets a dash in the digest column, not a digest"
+else
+  bad "a directory gets a dash in the digest column, not a digest"
+fi
+"$TMD" -f h.tar --hash=sha1 > /dev/null 2>&1
+check_status "an unknown --hash algorithm is a usage error" "$?" 2
+
+# The loop --manifest exists to close: write one, verify the same archive
+# against it, then verify a rebuild whose content changed but whose size and
+# dates did not -- the change only a digest can see.
+"$TMD" -f h.tar --manifest --hash=sha256 > manifest.txt 2>/dev/null
+check_contains "--manifest writes SIZE ALGO:DIGEST PATH" "$(cat manifest.txt)" "12 sha256:"
+"$TMD" -f h.tar --verify=manifest.txt > /dev/null 2>&1
+check_status "an archive verifies against its own manifest" "$?" 0
+printf 'BRAVO bravo\n' > htree/dir/b.txt
+touch_epoch 1700000000 htree/dir/b.txt htree/dir htree
+"$TAR" --format=gnu -cf h2.tar htree 2>/dev/null
+out="$("$TMD" -f h2.tar --verify=manifest.txt 2>/dev/null)"
+check_status "a same-size content change fails --verify" "$?" 5
+check_contains "and names the member and the digests" "$out" "~ htree/dir/b.txt   sha256"
+"$TMD" -f h.tar --manifest > sizes.txt 2>/dev/null
+"$TMD" -f h2.tar --verify=sizes.txt > /dev/null 2>&1
+check_status "a size-only manifest cannot see that change, as documented" "$?" 0
+"$TMD" -f h2.tar --verify=manifest.txt --hash=md5 > /dev/null 2>&1
+check_status "--hash that disagrees with the manifest's digests is refused" "$?" 2
+"$TMD" -f h.tar --manifest -t JSON > /dev/null 2>&1
+check_status "--manifest does not combine with another format" "$?" 2
+out="$("$TMD" --diff --hash=md5 -f h.tar -f h2.tar 2>/dev/null)"
+check_contains "--diff --hash sees a same-size content change" "$out" "~ htree/dir/b.txt   md5"
+"$TMD" --diff -f h.tar -f h2.tar > /dev/null 2>&1
+check_status "--diff without --hash cannot, as documented" "$?" 0
+
+# The date range: a.txt is from 2008, everything else from 2023.
+out="$("$TMD" -f h.tar --mtime-before=2012 2>/dev/null)"
+check "--mtime-before keeps only what is older" "1" "$(printf '%s\n' "$out" | count_lines)"
+check_contains "and it is the older member" "$out" "htree/a.txt"
+out="$("$TMD" -f h.tar --mtime-after=2012-06 2>/dev/null)"
+if grep -q 'a.txt' <<< "$out"; then
+  bad "--mtime-after keeps out an older member"
+else
+  ok "--mtime-after keeps out an older member"
+fi
+out="$("$TMD" -f h.tar --mtime-after=@1700000000 --mtime-before=@1700000001 2>/dev/null)"
+check "an exact one-second range selects what is in it" "3" "$(printf '%s\n' "$out" | count_lines)"
+"$TMD" -f h.tar --mtime-before=1990 > /dev/null 2>&1
+check_status "a date range that selects nothing exits 4" "$?" 4
+"$TMD" -f h.tar --mtime-before=yesterday > /dev/null 2>&1
+check_status "an unreadable date is a usage error" "$?" 2
+out="$("$TMD" -f h.tar --mtime-before=2012 -S 2>/dev/null)"
+check_contains "the summary still describes the whole archive" "$out" "matched       1 of 4 members"
+
+# Owners and nested archives, from the -i report.
+out="$("$TMD" -f gnu.tar -i 2>/dev/null)"
+check_contains "-i tallies the owners" "$out" "  owners           "
+cp h.tar inner.tar.gz
+"$TAR" --format=gnu -cf outer.tar inner.tar.gz htree/a.txt 2>/dev/null
+out="$("$TMD" -f outer.tar -i 2>/dev/null)"
+check_contains "-i points out a member that is an archive itself" "$out" "nested archives  1 member looks like an archive by name: inner.tar.gz"
+
 printf '\n\033[1;94m▸ the command line\033[0m\n'
 
 # The usage text itself, via the explicit flag.

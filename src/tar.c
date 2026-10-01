@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hash.h"
 #include "util.h"
 
 /* Field offsets and widths, named so the parsing below reads as prose. */
@@ -99,6 +100,11 @@ struct tmd_reader {
     /* -R: keep the extension header blocks verbatim. Off by default, because
      * it costs up to 16KB per member and only -R ever reads it. */
     bool capture_raw;
+
+    /* --hash: which digest, and which members it is wanted for. */
+    enum tmd_hash hash;
+    tmd_select_fn hash_want;
+    const void   *hash_ctx;
 
     /* Where the member being assembled started, so its true cost in the
      * archive can be measured rather than guessed from the size field. */
@@ -1191,6 +1197,171 @@ static void apply_pax(struct tmd_reader *r, struct tmd_entry *e)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Content digests                                                           */
+/* ------------------------------------------------------------------------- */
+
+/* Feed `n` bytes of the payload to the digest. False when the archive ended
+ * first; *consumed counts what was read either way. */
+static bool hash_feed(struct tmd_reader *r, struct tmd_hash_ctx *ctx,
+                      uint64_t n, uint64_t *consumed)
+{
+    char buf[65536];
+
+    while (n > 0)
+    {
+        size_t want = n < sizeof(buf) ? (size_t)n : sizeof(buf);
+        size_t got = tmd_source_read(r->src, buf, want);
+
+        *consumed += got;
+        tmd_hash_update(ctx, buf, got);
+        if (got < want)
+        {
+            return false;
+        }
+        n -= got;
+    }
+    return true;
+}
+
+/* A hole in a sparse file, which extraction writes as zeros. */
+static void hash_zeros(struct tmd_hash_ctx *ctx, uint64_t n)
+{
+    static const char zeros[65536];
+
+    while (n > 0)
+    {
+        size_t take = n < sizeof(zeros) ? (size_t)n : sizeof(zeros);
+
+        tmd_hash_update(ctx, zeros, take);
+        n -= take;
+    }
+}
+
+/*
+ * Digest what extracting this member would write, reading `avail` payload
+ * bytes at most. Returns how many it consumed, so the caller skips only the
+ * rest.
+ *
+ * A sparse member's payload is its data segments end to end, so the holes
+ * between them -- and after the last, up to the real size -- are fed in as
+ * zeros. A map that runs backwards, or claims more data than the payload
+ * holds, cannot be expanded honestly, and the member gets no digest rather
+ * than a wrong one.
+ */
+static uint64_t hash_member(struct tmd_reader *r, struct tmd_entry *e,
+                            uint64_t avail)
+{
+    struct tmd_hash_ctx ctx;
+    uint64_t            consumed = 0;
+
+    tmd_hash_init(&ctx, r->hash);
+
+    if (!e->is_sparse)
+    {
+        /* Only a pax 1.0 sparse map consumes payload before this point, and
+         * that member is sparse; so for this one the whole payload is still
+         * there to read. Checked anyway, rather than trusted. */
+        if (avail < e->data_size || !hash_feed(r, &ctx, e->data_size, &consumed))
+        {
+            warn_entry(e, "hash-data-truncated",
+                       "member data is truncated, so it has no %s",
+                       tmd_hash_name(r->hash));
+            return consumed;
+        }
+    } else
+    {
+        uint64_t at = 0;
+        uint64_t data = 0;
+        size_t   i;
+
+        if (e->sparse_truncated)
+        {
+            warn_entry(e, "hash-sparse-unreadable",
+                       "the sparse map was not read in full, so the member "
+                       "has no %s", tmd_hash_name(r->hash));
+            return 0;
+        }
+        for (i = 0; i < e->nsparse; i++)
+        {
+            data += e->sparse[i].numbytes;
+            if (e->sparse[i].offset < at || data > avail ||
+                data < e->sparse[i].numbytes)
+            {
+                warn_entry(e, "hash-sparse-unreadable",
+                           "the sparse map does not describe the payload, so "
+                           "the member has no %s", tmd_hash_name(r->hash));
+                return consumed;
+            }
+            hash_zeros(&ctx, e->sparse[i].offset - at);
+            if (!hash_feed(r, &ctx, e->sparse[i].numbytes, &consumed))
+            {
+                warn_entry(e, "hash-data-truncated",
+                           "member data is truncated, so it has no %s",
+                           tmd_hash_name(r->hash));
+                return consumed;
+            }
+            at = e->sparse[i].offset + e->sparse[i].numbytes;
+        }
+        if (e->realsize > at)
+        {
+            hash_zeros(&ctx, e->realsize - at);
+        }
+    }
+
+    tmd_hash_final(&ctx, e->content_hash);
+    e->content_hashed = true;
+    r->archive.hashed++;
+    return consumed;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Owners                                                                    */
+/* ------------------------------------------------------------------------- */
+
+/* Tally the member's "user/group", names where stored and numbers where not --
+ * the same spelling the listing uses without -n. */
+static void note_owner(struct tmd_features *f, const struct tmd_entry *e)
+{
+    char   key[160];
+    char   user[64];
+    char   group[64];
+    size_t i;
+
+    if (e->uname && e->uname[0])
+    {
+        (void)snprintf(user, sizeof(user), "%s", e->uname);
+    } else
+    {
+        (void)snprintf(user, sizeof(user), "%lld", (long long)e->uid);
+    }
+    if (e->gname && e->gname[0])
+    {
+        (void)snprintf(group, sizeof(group), "%s", e->gname);
+    } else
+    {
+        (void)snprintf(group, sizeof(group), "%lld", (long long)e->gid);
+    }
+    (void)snprintf(key, sizeof(key), "%s/%s", user, group);
+
+    for (i = 0; i < f->nowners; i++)
+    {
+        if (strcmp(f->owners[i].owner, key) == 0)
+        {
+            f->owners[i].count++;
+            return;
+        }
+    }
+    if (f->nowners >= sizeof(f->owners) / sizeof(f->owners[0]))
+    {
+        f->owners_untallied++;
+        return;
+    }
+    f->owners[f->nowners].owner = tmd_xstrdup(key);
+    f->owners[f->nowners].count = 1;
+    f->nowners++;
+}
+
+/* ------------------------------------------------------------------------- */
 /* The main loop                                                             */
 /* ------------------------------------------------------------------------- */
 
@@ -1291,6 +1462,15 @@ void tmd_reader_capture_raw(struct tmd_reader *r, bool on)
     r->capture_raw = on;
 }
 
+void tmd_reader_hash(struct tmd_reader *r, enum tmd_hash algo,
+                     tmd_select_fn want, const void *ctx)
+{
+    r->hash = algo;
+    r->hash_want = want;
+    r->hash_ctx = ctx;
+    r->archive.hash = algo;
+}
+
 void tmd_reader_free(struct tmd_reader *r)
 {
     size_t i;
@@ -1307,6 +1487,14 @@ void tmd_reader_free(struct tmd_reader *r)
     for (i = 0; i < r->archive.features.npax_keys; i++)
     {
         free(r->archive.features.pax_keys[i]);
+    }
+    for (i = 0; i < r->archive.features.nowners; i++)
+    {
+        free(r->archive.features.owners[i].owner);
+    }
+    for (i = 0; i < r->archive.features.nnested_examples; i++)
+    {
+        free(r->archive.features.nested_examples[i]);
     }
     for (i = 0; i < r->archive.nwarnings; i++)
     {
@@ -2027,6 +2215,26 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                 }
             }
 
+            /*
+             * --hash reads the content instead of seeking past it, for the
+             * members it was asked about and no others. Everything is resolved
+             * by now -- path, type, times, sparse map -- so the selection sees
+             * the member as the listing will.
+             */
+            if (r->hash != TMD_HASH_NONE &&
+                (e->kind == TMD_KIND_FILE || e->kind == TMD_KIND_CONTIGUOUS) &&
+                (!r->hash_want || r->hash_want(e, r->hash_ctx)))
+            {
+                /* Including an empty file, whose digest is the one every empty
+                 * document in a load file carries, and a sparse file that is
+                 * all hole. */
+                uint64_t avail = e->data_size > payload_consumed
+                                     ? e->data_size - payload_consumed : 0;
+                uint64_t used = hash_member(r, e, avail);
+
+                payload = payload > used ? payload - used : 0;
+            }
+
             if (payload > 0 && !tmd_source_skip(r->src, payload))
             {
                 warn_entry(e, "member-data-truncated", "member data is truncated");
@@ -2108,6 +2316,18 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             for (k = 0; k < e->npax; k++)
             {
                 note_pax_key(f, e->pax[k].key);
+            }
+            note_owner(f, e);
+            if (e->kind == TMD_KIND_FILE && tmd_looks_like_archive(e->path))
+            {
+                e->nested_archive = true;
+                f->nested_archives++;
+                if (f->nnested_examples < sizeof(f->nested_examples) /
+                                              sizeof(f->nested_examples[0]))
+                {
+                    f->nested_examples[f->nnested_examples++] =
+                        tmd_xstrdup(e->path);
+                }
             }
         }
 

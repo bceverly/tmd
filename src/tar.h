@@ -42,6 +42,19 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out);
  * and their payload blocks verbatim, padding included. Off by default. */
 void tmd_reader_capture_raw(struct tmd_reader *r, bool on);
 
+/*
+ * --hash: digest the content of the members `want` accepts.
+ *
+ * This is the one thing that makes the reader read member data rather than
+ * seek past it, so it is per member and opt-in: `want` is asked once each
+ * member's path, type and times are resolved, and only a member it accepts is
+ * read. NULL accepts every member. Only members with content -- regular files
+ * -- are ever hashed.
+ */
+typedef bool (*tmd_select_fn)(const struct tmd_entry *e, const void *ctx);
+void tmd_reader_hash(struct tmd_reader *r, enum tmd_hash algo,
+                     tmd_select_fn want, const void *ctx);
+
 struct tmd_entry *tmd_entry_clone(const struct tmd_entry *e);
 void              tmd_entry_free(struct tmd_entry *e);
 

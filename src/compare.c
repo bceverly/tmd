@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hash.h"
 #include "opts.h"
 #include "render.h"
 #include "source.h"
@@ -46,6 +47,7 @@
 #define D_MTIME (1u << 2)
 #define D_KIND  (1u << 3)
 #define D_LINK  (1u << 4)
+#define D_HASH  (1u << 5)
 
 /*
  * One side of a comparison.
@@ -61,6 +63,11 @@ struct side {
     enum tmd_kind kind;
     char         *linkpath;
     uint64_t      offset;
+    /* The content digest, under --hash or from a manifest line that carries
+     * one. A member with no content -- or whose content could not all be
+     * read -- has none. */
+    char          digest[TMD_HASH_HEX_MAX];
+    bool          have_digest;
     unsigned      count;
     bool          present;
     bool          have_size;
@@ -229,6 +236,11 @@ static void side_from_entry(struct side *s, const struct tmd_entry *e)
     s->offset = e->offset;
     free(s->linkpath);
     s->linkpath = tmd_xstrdup(e->linkpath ? e->linkpath : "");
+    s->have_digest = e->content_hashed;
+    if (e->content_hashed)
+    {
+        (void)snprintf(s->digest, sizeof(s->digest), "%s", e->content_hash);
+    }
 }
 
 /* Only the fields both sides actually state. */
@@ -257,6 +269,17 @@ static unsigned side_differences(const struct side *want,
         strcmp(want->linkpath, got->linkpath) != 0)
     {
         d |= D_LINK;
+    }
+    /*
+     * The digest is compared whenever the EXPECTED side states one. If the
+     * found side then has none -- the member is a directory now, or its data
+     * was cut short -- that is a difference too: the claim was "this content",
+     * and it could not be shown to hold.
+     */
+    if (want->have_digest &&
+        (!got->have_digest || strcmp(want->digest, got->digest) != 0))
+    {
+        d |= D_HASH;
     }
     return d;
 }
@@ -297,8 +320,14 @@ static bool selected(const struct tmd_options *opt, const char *path)
  * `which` picks the side, so the same function fills the expected side from the
  * first archive and the found side from the second.
  */
+/* --hash digests exactly the members the comparison will look at. */
+static bool want_member(const struct tmd_entry *e, const void *ctx)
+{
+    return tmd_entry_selected((const struct tmd_options *)ctx, e);
+}
+
 static bool read_into(struct index *ix, const char *path, bool as_found,
-                      const struct tmd_options *opt)
+                      const struct tmd_options *opt, enum tmd_hash hash)
 {
     struct tmd_source      *src;
     struct tmd_reader      *reader;
@@ -316,12 +345,16 @@ static bool read_into(struct index *ix, const char *path, bool as_found,
         return false;
     }
     reader = tmd_reader_new(src);
+    if (hash != TMD_HASH_NONE)
+    {
+        tmd_reader_hash(reader, hash, want_member, opt);
+    }
 
     while ((rc = tmd_reader_next(reader, &e)) == 1)
     {
         struct pair *p;
 
-        if (!e->path || !selected(opt, e->path))
+        if (!e->path || !tmd_entry_selected(opt, e))
         {
             continue;
         }
@@ -358,8 +391,53 @@ static bool read_into(struct index *ix, const char *path, bool as_found,
  * "-". Otherwise the whole line is taken as the path, so a file actually named
  * "2481 notes.txt" still works as long as no size is given for it.
  */
+/*
+ * "md5:<32 hex>" or "sha256:<64 hex>", as --manifest writes them. False for
+ * anything else, which leaves the token to be read as the start of the path.
+ */
+static bool parse_digest_token(const char *tok, size_t len, enum tmd_hash *algo,
+                               char digest[TMD_HASH_HEX_MAX])
+{
+    static const enum tmd_hash algos[] = { TMD_HASH_MD5, TMD_HASH_SHA256 };
+    size_t i;
+
+    for (i = 0; i < sizeof(algos) / sizeof(algos[0]); i++)
+    {
+        const char *name = tmd_hash_name(algos[i]);
+        size_t      nlen = strlen(name);
+        size_t      hlen = tmd_hash_hex_len(algos[i]);
+        size_t      k;
+
+        if (len != nlen + 1 + hlen || strncmp(tok, name, nlen) != 0 ||
+            tok[nlen] != ':')
+        {
+            continue;
+        }
+        for (k = 0; k < hlen; k++)
+        {
+            char c = tok[nlen + 1 + k];
+
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                  (c >= 'A' && c <= 'F')))
+            {
+                return false;
+            }
+            /* Lowercase, because that is what tmd prints and compares. */
+            if (c >= 'A' && c <= 'F')
+            {
+                c = (char)(c - 'A' + 'a');
+            }
+            digest[k] = c;
+        }
+        digest[hlen] = '\0';
+        *algo = algos[i];
+        return true;
+    }
+    return false;
+}
+
 static bool read_manifest(struct index *ix, const char *path,
-                          const struct tmd_options *opt)
+                          const struct tmd_options *opt, enum tmd_hash *hash)
 {
     FILE   *f;
     char    line[8192];
@@ -382,6 +460,8 @@ static bool read_manifest(struct index *ix, const char *path,
         size_t      len = strlen(line);
         uint64_t    size = 0;
         bool        have_size = false;
+        char        digest[TMD_HASH_HEX_MAX];
+        bool        have_digest = false;
         /*
          * A line that did not fit.
          *
@@ -461,6 +541,45 @@ static bool read_manifest(struct index *ix, const char *path,
             }
         }
 
+        /*
+         * Then, optionally, the digest --manifest --hash writes. One algorithm
+         * per manifest: the archive is read once, so it can be hashed one way,
+         * and a manifest that mixes them is not one tmd wrote.
+         */
+        {
+            char         *sep = p;
+            enum tmd_hash algo = TMD_HASH_NONE;
+
+            while (*sep && *sep != ' ' && *sep != '\t')
+            {
+                sep++;
+            }
+            if (*sep && parse_digest_token(p, (size_t)(sep - p), &algo, digest))
+            {
+                char *rest = sep;
+
+                while (*rest == ' ' || *rest == '\t')
+                {
+                    rest++;
+                }
+                if (*rest)
+                {
+                    if (*hash != TMD_HASH_NONE && *hash != algo)
+                    {
+                        (void)fprintf(stderr, "tmd: %s:%zu: a %s digest in a "
+                                              "manifest of %s digests\n",
+                                      path, lineno, tmd_hash_name(algo),
+                                      tmd_hash_name(*hash));
+                        ok = false;
+                        continue;
+                    }
+                    *hash = algo;
+                    have_digest = true;
+                    p = rest;
+                }
+            }
+        }
+
         name = p;
         if (!*name)
         {
@@ -480,6 +599,12 @@ static bool read_manifest(struct index *ix, const char *path,
             pr->expected.count++;
             pr->expected.size = size;
             pr->expected.have_size = have_size;
+            pr->expected.have_digest = have_digest;
+            if (have_digest)
+            {
+                (void)snprintf(pr->expected.digest, sizeof(pr->expected.digest),
+                               "%s", digest);
+            }
         }
     }
     (void)fclose(f);
@@ -537,6 +662,15 @@ static void field_list(struct tmd_buf *b, unsigned d, const struct side *want,
     {
         tmd_buf_addf(b, "%starget %s%s%s%s", b->len ? ", " : "",
                      want->linkpath, arrow, got->linkpath, tail);
+    }
+    if (d & D_HASH)
+    {
+        tmd_buf_addf(b, "%s%s %s%s%s%s", b->len ? ", " : "",
+                     tmd_hash_name(opt->hash != TMD_HASH_NONE ? opt->hash
+                                   : (strlen(want->digest) == 32 ? TMD_HASH_MD5
+                                                                 : TMD_HASH_SHA256)),
+                     want->digest, arrow,
+                     got->have_digest ? got->digest : "(content not read)", tail);
     }
 }
 
@@ -713,6 +847,20 @@ static void report_json(FILE *out, struct index *ix, const char *want_name,
                 tmd_json_escape(&b, p->found.linkpath);
                 tmd_buf_addc(&b, '}');
             }
+            if (d & D_HASH)
+            {
+                tmd_buf_addf(&b, "%s\"content_hash\": {\"%s\": \"%s\", \"%s\": ",
+                             (d & (D_SIZE | D_MODE | D_MTIME | D_KIND | D_LINK))
+                                 ? ", " : "",
+                             k_from, p->expected.digest, k_to);
+                if (p->found.have_digest)
+                {
+                    tmd_buf_addf(&b, "\"%s\"}", p->found.digest);
+                } else
+                {
+                    tmd_buf_addstr(&b, "null}");
+                }
+            }
             tmd_buf_addc(&b, '}');
         }
         tmd_buf_addc(&b, '}');
@@ -783,7 +931,8 @@ int tmd_diff_archives(const char *from, const char *to, FILE *out,
     int          status;
 
     index_init(&ix);
-    if (!read_into(&ix, from, false, opt) || !read_into(&ix, to, true, opt))
+    if (!read_into(&ix, from, false, opt, opt->hash) ||
+        !read_into(&ix, to, true, opt, opt->hash))
     {
         index_free(&ix);
         return TMD_EXIT_ERROR;
@@ -799,9 +948,34 @@ int tmd_verify_archive(const char *archive, const char *manifest, FILE *out,
     struct index ix;
     int          status;
 
+    enum tmd_hash hash = TMD_HASH_NONE;
+
     index_init(&ix);
-    if (!read_manifest(&ix, manifest, opt) ||
-        !read_into(&ix, archive, true, opt))
+    if (!read_manifest(&ix, manifest, opt, &hash))
+    {
+        index_free(&ix);
+        return TMD_EXIT_ERROR;
+    }
+    /*
+     * A manifest that carries digests decides how the archive is hashed; one
+     * that carries none is hashed only if --hash asks. A --hash that disagrees
+     * with the manifest is refused rather than quietly overridden: two
+     * algorithms cannot be compared, and either choice would ignore what
+     * somebody typed.
+     */
+    if (hash != TMD_HASH_NONE && opt->hash != TMD_HASH_NONE && opt->hash != hash)
+    {
+        (void)fprintf(stderr, "tmd: %s carries %s digests; --hash=%s cannot be "
+                              "checked against them\n",
+                      manifest, tmd_hash_name(hash), tmd_hash_name(opt->hash));
+        index_free(&ix);
+        return TMD_EXIT_USAGE;
+    }
+    if (hash == TMD_HASH_NONE)
+    {
+        hash = opt->hash;
+    }
+    if (!read_into(&ix, archive, true, opt, hash))
     {
         index_free(&ix);
         return TMD_EXIT_ERROR;

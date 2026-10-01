@@ -75,4 +75,6 @@ Description: dump the metadata out of a tar archive
  .
  The archive is only ever opened for reading. Only headers are read, and member
  data is seeked over, so the cost of reading an archive is proportional to how
- many members it has rather than to how large it is.
+ many members it has rather than to how large it is. The one exception is
+ opt-in: --hash computes MD5 or SHA-256 digests of the members it is asked
+ about, and --manifest records them for a later --verify.

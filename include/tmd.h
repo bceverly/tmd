@@ -73,6 +73,14 @@ enum tmd_format {
     TMD_FMT_PAX      /* POSIX.1-2001: ustar plus 'x'/'g' attribute blobs */
 };
 
+/* Which content digest --hash computes. NONE, the zero value, is the default:
+ * hashing reads member data, which nothing else in this program does. */
+enum tmd_hash {
+    TMD_HASH_NONE = 0,
+    TMD_HASH_MD5,
+    TMD_HASH_SHA256
+};
+
 /* What the typeflag resolves to once the format's extensions are applied. */
 enum tmd_kind {
     TMD_KIND_UNKNOWN = 0,
@@ -305,6 +313,22 @@ struct tmd_entry {
     struct tmd_raw_block *ext_blocks;
     size_t                n_ext_blocks;
     bool                  ext_truncated;
+
+    /*
+     * --hash: the digest of what extracting this member would write.
+     *
+     * The EXTRACTED content, not the stored bytes: for a sparse member the
+     * holes are hashed as the zeros they become, so the digest matches the
+     * file on disk -- which is what a load file or a production index
+     * recorded. Set only for members with content (files), only when asked,
+     * and only when every byte was read; a member cut short has no digest
+     * rather than the digest of a fragment.
+     */
+    bool content_hashed;
+    char content_hash[65];
+
+    /* The name looks like an archive or a package in its own right. */
+    bool nested_archive;
 };
 
 /*
@@ -383,6 +407,30 @@ struct tmd_features {
     char   *pax_keys[64];
     size_t  npax_keys;
     bool    pax_keys_truncated;
+
+    /*
+     * Who owns the members: each distinct "user/group" and how many members
+     * carry it, in first-appearance order.
+     *
+     * Names where the archive stores them, numbers where it does not. On a
+     * backup of a multi-user system "who owns what" is often the question, and
+     * an owner that turns up where it should not -- one user's files inside
+     * another's home directory -- is invisible member by member and obvious in
+     * a tally. Bounded like the pax keys, and owners_untallied counts the
+     * members whose owner arrived after the table was full.
+     */
+    struct {
+        char    *owner;
+        uint64_t count;
+    } owners[64];
+    size_t   nowners;
+    uint64_t owners_untallied;
+
+    /* Members that look like archives themselves, by name. Tarballs inside
+     * tarballs are common enough that knowing to look saves a pass. */
+    uint64_t nested_archives;
+    char    *nested_examples[4];
+    size_t   nnested_examples;
 };
 
 /* Everything about the archive that is only knowable after reading it. */
@@ -437,6 +485,12 @@ struct tmd_archive {
      */
     const char *codec;
 
+    /* --hash: which digest was computed, and for how many members. NONE means
+     * only headers were read -- which is what makes a timing meaningful, and
+     * the report says which it was so that nobody compares one with the
+     * other. */
+    enum tmd_hash hash;
+    uint64_t      hashed;
 };
 
 enum tmd_output {
@@ -476,7 +530,7 @@ struct tmd_options {
      * Timestamps are UTC unless this is set.
      *
      * The flag is "local", not "utc", so that a zeroed options struct means
-     * UTC — the default a reader wants for an archive that has travelled. A
+     * UTC — the default a reader wants for an archive that has traveled. A
      * local-time reading of somebody else's tarball is ambiguous the moment it
      * leaves the machine that made it, and silently wrong after a DST change.
      */
@@ -484,7 +538,6 @@ struct tmd_options {
     bool  full_time;    /* -T: seconds, nanoseconds and the zone offset    */
     bool  check;        /* -c: a checksum mismatch is an exit status       */
     bool  quiet;        /* -q: do not write warnings to stderr             */
-    bool  verbose;      /* -v: one stderr line per absolute path, too      */
     bool  color;        /* resolved from --color and isatty()              */
 
     /*
@@ -503,6 +556,21 @@ struct tmd_options {
     bool          stats;   /* --stat: distributions instead of a listing  */
     enum tmd_sort sort;    /* --sort: order the listing by this          */
     bool          reverse; /* --reverse: and invert it                   */
+    bool          verbose; /* -v: one stderr line per absolute path       */
+
+    enum tmd_hash hash;     /* --hash: digest the members it selects      */
+    bool          manifest; /* --manifest: "SIZE [DIGEST] PATH" lines     */
+
+    /*
+     * --mtime-before / --mtime-after, as epoch seconds: a half-open range
+     * [after, before). Filters like -m: they narrow the listing and leave the
+     * summary describing the whole archive. A member with no mtime matches
+     * neither, because "before 2012" is a claim it cannot support.
+     */
+    bool    have_mtime_before;
+    int64_t mtime_before;
+    bool    have_mtime_after;
+    int64_t mtime_after;
 };
 
 const char *tmd_format_name(enum tmd_format f);

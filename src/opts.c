@@ -8,8 +8,10 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
+#include "hash.h"
 #include "util.h"
 
 /* Codes for the options that have no short letter. Above 255 so they cannot
@@ -21,7 +23,11 @@ enum {
     OPT_DIFF,
     OPT_VERIFY,
     OPT_REVERSE,
-    OPT_COLOR
+    OPT_COLOR,
+    OPT_HASH,
+    OPT_MANIFEST,
+    OPT_MTIME_BEFORE,
+    OPT_MTIME_AFTER
 };
 
 /* --- the three expansions of the option table --------------------------- */
@@ -186,7 +192,7 @@ void tmd_print_usage(FILE *out)
     (void)fprintf(out, "  %-24s %s\n", "3",
                   "--check found damage: a bad checksum or a truncated archive");
     (void)fprintf(out, "  %-24s %s\n", "4",
-                  "--match was given and no member matched");
+                  "--match or a date range was given and nothing matched");
     (void)fprintf(out, "  %-24s %s\n", "5",
                   "--diff or --verify found differences");
 
@@ -258,6 +264,161 @@ static bool parse_sort_key(const char *s, enum tmd_sort *out)
     return false;
 }
 
+/*
+ * Days from 1970-01-01 to a proleptic Gregorian date.
+ *
+ * Howard Hinnant's days_from_civil, because the UTC half of date parsing needs
+ * the inverse of gmtime and C11 does not have one: timegm is a BSD and glibc
+ * extension, and mktime answers in local time, which is the wrong question.
+ */
+static int64_t days_from_civil(int64_t y, unsigned m, unsigned d)
+{
+    int64_t  era;
+    unsigned yoe;
+    unsigned doy;
+    unsigned doe;
+
+    y -= m <= 2;
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = (unsigned)(y - era * 400);
+    doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (int64_t)doe - 719468;
+}
+
+/* Read exactly `n` digits. */
+static bool take_digits(const char **p, unsigned n, unsigned *out)
+{
+    unsigned v = 0;
+    unsigned i;
+
+    for (i = 0; i < n; i++)
+    {
+        if ((*p)[i] < '0' || (*p)[i] > '9')
+        {
+            return false;
+        }
+        v = v * 10 + (unsigned)((*p)[i] - '0');
+    }
+    *p += n;
+    *out = v;
+    return true;
+}
+
+/*
+ * A date for --mtime-before and --mtime-after: the START of the period it
+ * names.
+ *
+ *   2012                 2012-01-01 00:00:00
+ *   2012-06              2012-06-01 00:00:00
+ *   2012-06-15           2012-06-15 00:00:00
+ *   2012-06-15 14:30     (a 'T' works in place of the space; seconds optional;
+ *   2012-06-15T14:30:05Z  a trailing Z is accepted and changes nothing)
+ *   @1339770605          seconds since the epoch, exactly
+ *
+ * UTC, because that is what the listing shows: a date typed while reading the
+ * listing has to mean what the listing meant. Under --local both are local.
+ */
+static bool parse_date(const char *s, bool local, int64_t *out)
+{
+    const char *p = s;
+    unsigned    year, month = 1, day = 1, hour = 0, minute = 0, second = 0;
+
+    if (*p == '@')
+    {
+        char     *end;
+        long long v;
+
+        p++;
+        if (!((*p >= '0' && *p <= '9') || *p == '-'))
+        {
+            return false;
+        }
+        v = strtoll(p, &end, 10);
+        if (*end != '\0')
+        {
+            return false;
+        }
+        *out = (int64_t)v;
+        return true;
+    }
+
+    if (!take_digits(&p, 4, &year))
+    {
+        return false;
+    }
+    if (*p == '-')
+    {
+        p++;
+        if (!take_digits(&p, 2, &month) || month < 1 || month > 12)
+        {
+            return false;
+        }
+        if (*p == '-')
+        {
+            p++;
+            if (!take_digits(&p, 2, &day) || day < 1 || day > 31)
+            {
+                return false;
+            }
+            if (*p == ' ' || *p == 'T')
+            {
+                p++;
+                if (!take_digits(&p, 2, &hour) || hour > 23 || *p != ':')
+                {
+                    return false;
+                }
+                p++;
+                if (!take_digits(&p, 2, &minute) || minute > 59)
+                {
+                    return false;
+                }
+                if (*p == ':')
+                {
+                    p++;
+                    if (!take_digits(&p, 2, &second) || second > 60)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    if (*p == 'Z')
+    {
+        p++;
+    }
+    if (*p != '\0')
+    {
+        return false;
+    }
+
+    if (local)
+    {
+        struct tm tm;
+        time_t    t;
+
+        memset(&tm, 0, sizeof(tm));
+        tm.tm_year = (int)year - 1900;
+        tm.tm_mon = (int)month - 1;
+        tm.tm_mday = (int)day;
+        tm.tm_hour = (int)hour;
+        tm.tm_min = (int)minute;
+        tm.tm_sec = (int)second;
+        tm.tm_isdst = -1; /* let the zone decide, as a person reading it would */
+        t = mktime(&tm);
+        if (t == (time_t)-1)
+        {
+            return false;
+        }
+        *out = (int64_t)t;
+        return true;
+    }
+    *out = days_from_civil((int64_t)year, month, day) * 86400 +
+           (int64_t)hour * 3600 + (int64_t)minute * 60 + (int64_t)second;
+    return true;
+}
+
 static bool parse_output_type(const char *s, enum tmd_output *out)
 {
     static const struct {
@@ -293,6 +454,8 @@ static bool parse_output_type(const char *s, enum tmd_output *out)
 int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
 {
     const char *color_when = "auto";
+    const char *before = NULL;
+    const char *after = NULL;
     int         c;
 
     memset(cli, 0, sizeof(*cli));
@@ -401,6 +564,22 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         case OPT_DIFF:
             cli->options.diff = true;
             break;
+        case OPT_HASH:
+            if (!tmd_hash_parse(optarg, &cli->options.hash))
+            {
+                return bad_usage("unknown --hash algorithm \"%s\" — expected "
+                                 "md5 or sha256", optarg);
+            }
+            break;
+        case OPT_MANIFEST:
+            cli->options.manifest = true;
+            break;
+        case OPT_MTIME_BEFORE:
+            before = optarg; /* parsed below, once --local is known */
+            break;
+        case OPT_MTIME_AFTER:
+            after = optarg;
+            break;
         case OPT_VERIFY:
             cli->options.verify = optarg;
             break;
@@ -492,6 +671,69 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
     {
         return bad_usage("--verify checks one archive against a manifest; "
                          "%zu archives given", cli->nfiles);
+    }
+
+    /*
+     * The dates, now that --local has been seen wherever it was given: a date
+     * means the same thing whether it comes before the switch or after it.
+     */
+    if (before)
+    {
+        if (!parse_date(before, cli->options.local, &cli->options.mtime_before))
+        {
+            return bad_usage("cannot read --mtime-before date \"%s\" — expected "
+                             "YYYY, YYYY-MM, YYYY-MM-DD, YYYY-MM-DD HH:MM[:SS] "
+                             "or @EPOCH", before);
+        }
+        cli->options.have_mtime_before = true;
+    }
+    if (after)
+    {
+        if (!parse_date(after, cli->options.local, &cli->options.mtime_after))
+        {
+            return bad_usage("cannot read --mtime-after date \"%s\" — expected "
+                             "YYYY, YYYY-MM, YYYY-MM-DD, YYYY-MM-DD HH:MM[:SS] "
+                             "or @EPOCH", after);
+        }
+        cli->options.have_mtime_after = true;
+    }
+    if (cli->options.have_mtime_before && cli->options.have_mtime_after &&
+        cli->options.mtime_after >= cli->options.mtime_before)
+    {
+        return bad_usage("--mtime-after %s is not earlier than --mtime-before "
+                         "%s, so nothing could match", after, before);
+    }
+    /* A manifest line has no date to filter on, so the archive side would be
+     * narrowed and the manifest side not: every member outside the range
+     * would be reported missing. */
+    if (cli->options.verify &&
+        (cli->options.have_mtime_before || cli->options.have_mtime_after))
+    {
+        return bad_usage("--mtime-before and --mtime-after cannot narrow "
+                         "--verify: a manifest records no dates");
+    }
+
+    /* A manifest is its own output, for --verify to read back; mixed with a
+     * listing, a summary or another format it would not be one. */
+    if (cli->options.manifest)
+    {
+        if (cli->options.diff || cli->options.verify)
+        {
+            return bad_usage("--manifest writes a manifest; --diff and --verify "
+                             "read one -- run them separately");
+        }
+        if (cli->options.output != TMD_OUT_TEXT || cli->options.long_form ||
+            cli->options.summary_only || cli->options.with_summary ||
+            cli->options.info || cli->options.stats)
+        {
+            return bad_usage("--manifest is its own output; it does not combine "
+                             "with -t, -l, -R, -s, -S, -i or --stat");
+        }
+        if (cli->nfiles != 1)
+        {
+            return bad_usage("--manifest describes one archive; %zu given",
+                             cli->nfiles);
+        }
     }
 
     /*

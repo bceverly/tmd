@@ -106,6 +106,18 @@ warn once per member with an absolute path, not once per archive
 .B \-m, \-\-match=PATTERN
 show only members matching PATTERN; repeatable. A pattern with a '/' matches that path and everything under it, one without it the basename
 .TP
+.B     \-\-mtime\-before=DATE
+show only members modified before DATE (YYYY[\-MM[\-DD[ HH:MM[:SS]]]] or @EPOCH, UTC unless \-\-local)
+.TP
+.B     \-\-mtime\-after=DATE
+show only members modified at or after DATE
+.TP
+.B     \-\-hash=ALGO
+read the content of the members shown and print its md5 or sha256 (slower: it reads data, not just headers)
+.TP
+.B     \-\-manifest
+write a manifest of "SIZE PATH" lines for \-\-verify; with \-\-hash, "SIZE ALGO:DIGEST PATH"
+.TP
 .B     \-\-diff
 compare two archives given with \-f and report what changed
 .TP
@@ -150,7 +162,7 @@ the command line was wrong
 \-\-check found damage: a bad checksum or a truncated archive
 .TP
 .B 4
-\-\-match was given and no member matched
+\-\-match or a date range was given and nothing matched
 .TP
 .B 5
 \-\-diff or \-\-verify found differences
@@ -272,12 +284,77 @@ finds a logs directory at any depth.
 .PP
 Matching is case\-sensitive, and
 .B \-m
-may be repeated to match any of several patterns. Every occurrence of a
+may be repeated to match any of several patterns, and combines with the date
+range below. Every occurrence of a
 matching path is listed, with its byte offset, because an archive can hold the
 same path more than once and extraction keeps only the last. The summary keeps
 describing the whole archive and adds a
 .B matched
 line. When nothing matches, the exit status is 4.
+.SS Date ranges
+.B \-\-mtime\-before
+and
+.B \-\-mtime\-after
+each take a date and mean the start of the period written:
+.B 2012
+is 2012\-01\-01 00:00:00,
+.B 2016\-06
+the first of June,
+.B "2016\-06\-15 14:30"
+that minute, and
+.B @EPOCH
+seconds exactly. Together they make a half\-open range, inclusive of
+\-\-mtime\-after and exclusive of \-\-mtime\-before, so
+.B "\-\-mtime\-after=2016\-06 \-\-mtime\-before=2016\-07"
+is exactly June. Dates are UTC, as the listing is, or local under
+.BR \-\-local .
+.PP
+They filter as
+.B \-m
+does, and combine with it: a member has to match a pattern and fall in the
+range. A member with no mtime matches no range. They cannot narrow
+.BR \-\-verify ,
+because a manifest records no dates.
+.SS Content digests
+.B \-\-hash=md5
+or
+.B \-\-hash=sha256
+reads the content of each member the listing shows and prints its digest in a
+column before the path. The digest is of the extracted content: a sparse member
+is hashed with its holes as zeros, so it matches the digest of the extracted
+file. Only files have content; directories, links and devices show a dash, as
+does a member whose data was cut short, which also draws a warning.
+.PP
+This is the one option that reads member data, so it is opt\-in, it applies
+only to the members
+.B \-m
+and the date range select, and
+.B \-i
+and
+.B \-s
+report
+.B "content read yes"
+so that a timing is not mistaken for a headers\-only one. MD5 is offered
+because load files and older manifests record it, not as a security measure.
+.PP
+With
+.BR \-\-diff ,
+content is compared as well as size and dates.
+.SS Manifests
+.B \-\-manifest
+writes the format
+.B \-\-verify
+reads: two comment lines, then
+.B "SIZE PATH"
+per member, or
+.B "SIZE ALGO:DIGEST PATH"
+with
+.BR \-\-hash .
+The same archive always produces the same manifest. Verifying against one that
+carries digests hashes the archive the same way and compares content, which is
+what proves a re-delivered archive is the same one; a size\-only manifest cannot
+see an edit that kept a file's length. A path that a line cannot carry \- a
+newline in it, or leading whitespace \- is left out with a warning.
 .SS Long form
 .B \-l
 prints every field of every member instead \- format, typeflag, both owner
@@ -357,15 +434,20 @@ lists them individually, and
 .B \-l
 and the JSON carry the warning on each member regardless.
 .SH LIMITATIONS
+A compressed archive \- gzip, bzip2, xz, zstd, lz4, lzip or compress \- is
+decompressed on the way in by running the system's own tool, so that tool has
+to be installed; when it is not,
 .B tmd
-reads plain, uncompressed tar archives. A compressed archive is recognized and
-named \- gzip, bzip2, xz, zstd, lz4 and lzip \- along with the command that
-produces a tar stream from it, which can then be piped in with
-.BR "tmd -f -" .
+says which one is missing. A wrapper inside a wrapper is named but not opened.
 .PP
-Only the headers are read. Member data is stepped over, by seeking where the
-input can seek, so the cost of reading an archive is proportional to the number
-of members rather than to its size.
+Only the headers are read unless
+.B \-\-hash
+is given. Member data is stepped over, by seeking where the input can seek, so
+the cost of reading an archive is proportional to the number of members rather
+than to its size.
+.B \-\-hash
+reads the content of the members it selects, and costs what reading them
+costs.
 .SH SEE ALSO
 .BR tar (1),
 .BR bsdtar (1),

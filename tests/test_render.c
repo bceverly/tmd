@@ -348,16 +348,17 @@ static void test_output_formats(void)
     CHECK_CONTAINS(out, "path,kind,mode_string");
     CHECK_CONTAINS(out, "\"a,file\"\"with\nawkward,name\"");
     CHECK_CONTAINS(out, "2020-09-13T12:26:40Z");
-    CHECK_CONTAINS(out, ",checksum,path_hex,linkpath_hex\n");
-    /* A path that is text leaves both hex columns empty. */
-    CHECK_CONTAINS(out, ",ok,,\n");
+    CHECK_CONTAINS(out, ",checksum,path_hex,linkpath_hex,content_hash\n");
+    /* A path that is text leaves both hex columns empty, and without --hash
+     * so is the digest column. */
+    CHECK_CONTAINS(out, ",ok,,,\n");
     free(out);
 
     TEST_CASE("csv gives a non-UTF-8 path back as hex, losslessly");
     make_entry(&e);
     e.path = (char *)"\xf0\xd2\xc9\xd7\xc5\xd4.txt"; /* KOI8-R */
     out = render_to_string(&opt, &a, &e, 1);
-    CHECK_CONTAINS(out, ",ok,f0d2c9d7c5d42e747874,\n");
+    CHECK_CONTAINS(out, ",ok,f0d2c9d7c5d42e747874,,\n");
     free(out);
 
     TEST_CASE("json carries the entry and the summary in one object");

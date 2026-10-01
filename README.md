@@ -88,6 +88,11 @@ lrwxrwxrwx  jsmith/staff               0  2024-07-19 22:58:12Z  docs/latest -> n
 - **It never writes.** The archive is opened read-only, no member is extracted,
   and only headers are read — member data is seeked over, so the cost is
   proportional to how many members an archive has rather than to how large it is.
+  The one exception is opt-in: `--hash` reads the content of the members it is
+  asked about, and every report says when it did.
+- **Content digests and manifests.** `--hash=md5|sha256` fingerprints members
+  without extracting them; `--manifest` writes the record `--verify` checks a
+  re-delivered archive against.
 
 ## Quick start
 
@@ -138,6 +143,10 @@ Options:
   -q, --quiet              do not write warnings about damaged headers to standard error
   -v, --verbose            warn once per member with an absolute path, not once per archive
   -m, --match=PATTERN      show only members matching PATTERN; repeatable. A pattern with a '/' matches that path and everything under it, one without it the basename
+      --mtime-before=DATE  show only members modified before DATE (YYYY[-MM[-DD[ HH:MM[:SS]]]] or @EPOCH, UTC unless --local)
+      --mtime-after=DATE   show only members modified at or after DATE
+      --hash=ALGO          read the content of the members shown and print its md5 or sha256 (slower: it reads data, not just headers)
+      --manifest           write a manifest of "SIZE PATH" lines for --verify; with --hash, "SIZE ALGO:DIGEST PATH"
       --diff               compare two archives given with -f and report what changed
       --verify=FILE        check the archive against a manifest of expected "SIZE PATH" lines
       --stat               report distributions instead of a listing: sizes, padding, and how the archive's timestamps are spread
@@ -169,8 +178,8 @@ worked. `-f -` remains valid and means exactly the same thing, for scripts that
 would rather be explicit.
 
 **Exit status.** `0` the archive was read · `1` it could not be read · `2` the
-command line was wrong · `3` `--check` found damage · `4` `--match` found no
-member · `5` `--diff` or `--verify` found differences. Distinct statuses rather
+command line was wrong · `3` `--check` found damage · `4` `--match` or a date
+range selected no member · `5` `--diff` or `--verify` found differences. Distinct statuses rather
 than one, because the difference matters to a script: a mistyped flag is the
 caller's bug, an unreadable archive is the file's problem, a bad checksum is a
 *finding* — the tool worked perfectly and the archive is damaged — and the last
@@ -285,6 +294,85 @@ found damage):
 $ tmd -f backup.tar -m secrets.env || echo "not in this archive"
 not in this archive
 ```
+
+### `--mtime-before` and `--mtime-after`, a date range
+
+```console
+$ tmd -f backup.tar --mtime-before=2012
+$ tmd -f backup.tar --mtime-after=2016-06 --mtime-before=2016-07 -m 'home/*'
+```
+
+Each takes a date and means **the start of the period written**: `2012` is
+2012-01-01 00:00:00, `2016-06` is the first of June, and `2016-06-15 14:30` is
+that minute. `@EPOCH` gives seconds exactly. Together they make a half-open
+range — `--mtime-after` is inclusive and `--mtime-before` strict — so
+`--mtime-after=2016-06 --mtime-before=2016-07` is exactly June.
+
+Dates are UTC, because that is what the listing shows, and a date typed while
+reading the listing has to mean what the listing meant. Under `--local` they are
+local, like the listing.
+
+They are filters in the same sense as `-m`, and combine with it: a member has to
+match a pattern *and* fall in the range. The summary keeps describing the whole
+archive with a `matched N of M` line, and exit status 4 means nothing was
+selected. A member with no mtime at all matches no range, because "before 2012"
+is a claim it cannot support. They cannot narrow `--verify`, because a manifest
+records no dates.
+
+### `--hash`, what is actually in a member
+
+```console
+$ tmd -f production.tar --hash=md5 -m 'DOC-0001234.pdf'
+-rw-r--r--  jsmith/staff   184220  2016-06-08 15:49:19Z  9e107d9d372bb6826bd81d3542a419d6  docs/DOC-0001234.pdf   @88064
+```
+
+`--hash=md5` or `--hash=sha256` reads the content of each member the listing
+shows and prints its digest in a column before the path, the way `md5sum` does.
+Without extracting anything, that answers "the file inside this archive hashes
+to X" — which is what a load file or a production index records, and what turns
+an archive member into something that can be cited.
+
+- **It is the extracted content.** A sparse member is hashed as the file it
+  would extract to, holes included as zeros, so the digest matches `md5sum` run
+  on the extracted file.
+- **It is opt-in, and it is not free.** Hashing reads member data, which nothing
+  else in tmd does. Combine it with `-m` or the date range and only those
+  members are read; the rest are still seeked over. `-i` and `-s` report
+  `content read  yes — md5 of N members`, and the JSON summary has
+  `"content_read": true`, so a timing is never mistaken for a headers-only one.
+- **Only files have content.** Directories, links and devices get a `-` in the
+  digest column and `"content_hash": null` in JSON. So does a member whose data
+  was cut short: no digest rather than the digest of a fragment, with a warning
+  saying why.
+- **MD5 is there for matching, not security.** It is what load files and older
+  manifests record. SHA-256 is beside it for when the choice is yours.
+
+It also feeds the comparisons: `--diff --hash` compares content as well as size
+and dates, which is the only way to see a change that kept both.
+
+### `--manifest`, and verifying a re-delivery
+
+```console
+$ tmd -f delivery.tar --manifest --hash=sha256 > delivery.manifest
+$ tmd -f redelivered.tar --verify=delivery.manifest
+--- delivery.manifest
++++ redelivered.tar
+~ docs/budget.xls   sha256 5891b5b5...6f2be03 expected, 963b7e71...4437720 found
+  3394 identical, 1 changed, 0 unexpected, 0 missing
+```
+
+`--manifest` writes the format `--verify` reads: `SIZE PATH`, one member per
+line, or `SIZE ALGO:DIGEST PATH` with `--hash`. A manifest with digests makes
+`--verify` hash the archive the same way and compare content, which is what
+proves a re-delivered archive is the same one. A size-only manifest cannot: a
+file edited without changing its length passes.
+
+The output is deterministic — two comment lines naming the format and the
+archive, then the members in archive order (or `--sort` order) — so the same
+archive always produces the same manifest, byte for byte, and two manifests can
+be diffed. `-m` and the date range narrow it. A path that a line-based format
+cannot carry (a newline in it, or leading whitespace) is left out with a
+warning rather than written in a form that would verify as a different path.
 
 ### `--sort`, ordering the listing
 
@@ -623,6 +711,7 @@ $ tmd -f backup.tar -i
 
 backup.tar
   size             12288 bytes (12K)
+  content read     no — headers only; member data was skipped
   format           POSIX pax (POSIX.1-2001)
   generation       3rd — POSIX pax, IEEE 1003.1-2001
                    ustar headers plus 'x' and 'g' blocks carrying arbitrary
@@ -635,6 +724,7 @@ backup.tar
   paths            longest 203 bytes; 1 over the v7 limit
   timestamps       mtime to nanosecond precision
   ownership        names and numbers; highest uid 1000, gid 1000
+  owners           bceverly/staff (7), root/wheel (1)
   blocking         20 blocks of 512 bytes (10240), inferred from the length
   end marker       present (two zero blocks)
   members          8 (3 files, 3 directories, 1 symlink, 1 hard link)
@@ -661,14 +751,38 @@ facts the archive states, and both are labeled as such:
   perfectly in a ustar-only tool, and saying otherwise would send somebody
   converting an archive that nothing has trouble with.
 
+Three lines appear only when they have something to say, or say it plainly:
+
+- **"owners"** tallies each distinct user/group, most members first — names
+  where the archive stores them, numbers where it does not. On a backup of a
+  multi-user system, "who owns what" is often the question, and one user's files
+  sitting in another's home directory is invisible member by member and obvious
+  here:
+
+  ```console
+    owners           is/is (54), aershov/staff (8), saltaev/saltaev (6), scg/staff (5), and 9 more
+  ```
+
+  The first eight are shown; the JSON (`summary.features.owners`) carries all
+  of them, up to 64 distinct, with a count of any members past that.
+- **"nested archives"** counts members whose name says they are archives
+  themselves — `.tar`, `.tar.gz`, `.tgz`, `.zip`, `.deb`, `.rpm`, `.7z` and the
+  rest — and names the first few. A tarball inside a tarball is common, and
+  knowing to look saves a pass. It is by name only; a lone `.gz` is a
+  compressed file, not an archive, and is not counted. In JSON each such member
+  carries `"nested_archive": true`.
+- **"content read"** says whether member data was read. It is always `no`
+  unless `--hash` was given, and it is there so that nobody compares a timing
+  of a hashing run with one of a headers-only run.
+
 ### JSON and CSV
 
 ```console
 $ tmd -f backup.tar -t JSON | jq '.summary.members'
 8
 $ tmd -f backup.tar -t CSV | head -2
-path,kind,mode_string,mode,format,uid,gid,uname,gname,size,stored_size,offset,mtime,mtime_epoch,linkpath,checksum,path_hex,linkpath_hex
-src/main.c,file,-rw-r--r--,0644,pax,1000,50,bceverly,staff,1234,1536,0,2026-09-16T18:11:33Z,1789668693,,ok,,
+path,kind,mode_string,mode,format,uid,gid,uname,gname,size,stored_size,offset,mtime,mtime_epoch,linkpath,checksum,path_hex,linkpath_hex,content_hash
+src/main.c,file,-rw-r--r--,0644,pax,1000,50,bceverly,staff,1234,1536,0,2026-09-16T18:11:33Z,1789668693,,ok,,,
 ```
 
 `-t` / `--output-type` takes `TXT`, `JSON` or `CSV` in either case. `--format`
