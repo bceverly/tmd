@@ -1104,6 +1104,53 @@ check_status "an unreadable date is a usage error" "$?" 2
 out="$("$TMD" -f h.tar --mtime-before=2012 -S 2>/dev/null)"
 check_contains "the summary still describes the whole archive" "$out" "matched       1 of 4 members"
 
+# --exclude and the size bounds, on the same fixture.
+out="$("$TMD" -f h.tar --exclude=dir 2>/dev/null)"
+if grep -q 'htree/dir' <<< "$out"; then
+  bad "--exclude NAME drops the directory and everything beneath it"
+else
+  ok "--exclude NAME drops the directory and everything beneath it"
+fi
+check_contains "and keeps the rest" "$out" "htree/a.txt"
+out="$("$TMD" -f h.tar -m 'htree/' --exclude='*.txt' 2>/dev/null)"
+if grep -q '\.txt' <<< "$out"; then
+  bad "--exclude wins over -m"
+else
+  ok "--exclude wins over -m"
+fi
+out="$("$TMD" -f h.tar --min-size=10 2>/dev/null)"
+check "--min-size keeps only what is big enough" "1" "$(printf '%s\n' "$out" | count_lines)"
+check_contains "and it is the 12-byte file" "$out" "htree/dir/b.txt"
+out="$("$TMD" -f h.tar --max-size=6 --min-size=1 2>/dev/null)"
+check_contains "--max-size and --min-size combine" "$out" "htree/a.txt"
+"$TMD" -f h.tar --min-size=1K --max-size=10 > /dev/null 2>&1
+check_status "a --min-size above --max-size is a usage error" "$?" 2
+"$TMD" -f h.tar --verify=manifest.txt --min-size=1 > /dev/null 2>&1
+check_status "the size bounds cannot narrow --verify" "$?" 2
+
+# -m and --exclude narrow a comparison on both sides.
+out="$("$TMD" --diff --hash=md5 -f h.tar -f h2.tar --exclude=dir 2>/dev/null)"
+check_status "--diff narrowed past the change finds nothing" "$?" 0
+check_contains "and counts only what it compared" "$out" "  2 identical, 0 changed"
+
+# -c under the comparisons: damage outranks a difference, because it is usually
+# the reason for one.
+head_bytes 1536 < h.tar > hcut.tar
+"$TMD" -f hcut.tar --verify=manifest.txt > /dev/null 2>&1
+check_status "a truncated archive fails --verify with 5" "$?" 5
+"$TMD" -f hcut.tar --verify=manifest.txt -c > /dev/null 2>&1
+check_status "with -c, the damage's 3 outranks the comparison's 5" "$?" 3
+err="$("$TMD" -f hcut.tar --verify=manifest.txt -c 2>&1 >/dev/null)"
+check_contains "and stderr says what the damage was" "$err" "--check found damage: no end-of-archive marker"
+"$TMD" --diff -c -f h.tar -f hcut.tar > /dev/null 2>&1
+check_status "--diff -c does the same" "$?" 3
+"$TMD" --diff -c -f h.tar -f h.tar > /dev/null 2>&1
+check_status "--diff -c on two sound, identical archives is 0" "$?" 0
+# And across archives, "could not be read" outranks "is damaged": the larger
+# number used to win, which put 3 over 1.
+"$TMD" -c -f hcut.tar -f no-such-archive.tar > /dev/null 2>&1
+check_status "an unreadable archive's 1 outranks another's damage" "$?" 1
+
 # Owners and nested archives, from the -i report.
 out="$("$TMD" -f gnu.tar -i 2>/dev/null)"
 check_contains "-i tallies the owners" "$out" "  owners           "

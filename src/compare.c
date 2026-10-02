@@ -296,24 +296,6 @@ static int pair_cmp(const void *a, const void *b)
 /* Reading                                                                   */
 /* ------------------------------------------------------------------------- */
 
-static bool selected(const struct tmd_options *opt, const char *path)
-{
-    size_t i;
-
-    if (opt->nmatch == 0)
-    {
-        return true;
-    }
-    for (i = 0; i < opt->nmatch; i++)
-    {
-        if (tmd_path_matches(path, opt->match[i]))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 /*
  * Read an archive into one side of the index.
  *
@@ -326,8 +308,50 @@ static bool want_member(const struct tmd_entry *e, const void *ctx)
     return tmd_entry_selected((const struct tmd_options *)ctx, e);
 }
 
+/*
+ * Under -c, the damage a plain run would exit 3 for: a bad header checksum, no
+ * end-of-archive marker, or data after it. Said on stderr, because the report
+ * on stdout is about the comparison, and it is the more important line.
+ */
+static bool archive_damaged(const struct tmd_archive *a, const char *path,
+                            const struct tmd_options *opt)
+{
+    struct tmd_buf why;
+
+    if (!opt->check ||
+        (a->bad_checksums == 0 && a->eof_marker && !a->trailing_garbage))
+    {
+        return false;
+    }
+    if (!opt->quiet)
+    {
+        tmd_buf_init(&why);
+        if (a->bad_checksums)
+        {
+            tmd_buf_addf(&why, "%llu bad header checksum%s",
+                         (unsigned long long)a->bad_checksums,
+                         a->bad_checksums == 1 ? "" : "s");
+        }
+        if (!a->eof_marker)
+        {
+            tmd_buf_addf(&why, "%sno end-of-archive marker (truncated)",
+                         why.len ? ", " : "");
+        }
+        if (a->trailing_garbage)
+        {
+            tmd_buf_addf(&why, "%sdata after the end-of-archive marker",
+                         why.len ? ", " : "");
+        }
+        (void)fprintf(stderr, "tmd: %s: --check found damage: %s\n", path,
+                      why.data ? why.data : "");
+        tmd_buf_free(&why);
+    }
+    return true;
+}
+
 static bool read_into(struct index *ix, const char *path, bool as_found,
-                      const struct tmd_options *opt, enum tmd_hash hash)
+                      const struct tmd_options *opt, enum tmd_hash hash,
+                      bool *damaged)
 {
     struct tmd_source      *src;
     struct tmd_reader      *reader;
@@ -365,6 +389,10 @@ static bool read_into(struct index *ix, const char *path, bool as_found,
     {
         (void)fprintf(stderr, "tmd: %s\n", tmd_reader_error(reader));
         ok = false;
+    }
+    if (rc == 0 && archive_damaged(tmd_reader_archive(reader), path, opt))
+    {
+        *damaged = true;
     }
     /* A comparison against half an archive is worse than no comparison. */
     if (tmd_source_codec_failed(src))
@@ -588,7 +616,10 @@ static bool read_manifest(struct index *ix, const char *path,
             ok = false;
             continue;
         }
-        if (!selected(opt, name))
+        /* -m and --exclude apply to the manifest exactly as to the archive;
+         * a filter applied to one side only would report everything it
+         * removed as missing. */
+        if (!tmd_path_selected(opt, name))
         {
             continue;
         }
@@ -929,25 +960,27 @@ int tmd_diff_archives(const char *from, const char *to, FILE *out,
 {
     struct index ix;
     int          status;
+    bool         damaged = false;
 
     index_init(&ix);
-    if (!read_into(&ix, from, false, opt, opt->hash) ||
-        !read_into(&ix, to, true, opt, opt->hash))
+    if (!read_into(&ix, from, false, opt, opt->hash, &damaged) ||
+        !read_into(&ix, to, true, opt, opt->hash, &damaged))
     {
         index_free(&ix);
         return TMD_EXIT_ERROR;
     }
     status = finish(out, &ix, from, to, opt, false);
     index_free(&ix);
-    return status;
+    /* See the comment on the same line in tmd_verify_archive. */
+    return damaged ? TMD_EXIT_CHECK : status;
 }
 
 int tmd_verify_archive(const char *archive, const char *manifest, FILE *out,
                        const struct tmd_options *opt)
 {
-    struct index ix;
-    int          status;
-
+    struct index  ix;
+    int           status;
+    bool          damaged = false;
     enum tmd_hash hash = TMD_HASH_NONE;
 
     index_init(&ix);
@@ -975,12 +1008,19 @@ int tmd_verify_archive(const char *archive, const char *manifest, FILE *out,
     {
         hash = opt->hash;
     }
-    if (!read_into(&ix, archive, true, opt, hash))
+    if (!read_into(&ix, archive, true, opt, hash, &damaged))
     {
         index_free(&ix);
         return TMD_EXIT_ERROR;
     }
     status = finish(out, &ix, manifest, archive, opt, true);
     index_free(&ix);
-    return status;
+    /*
+     * -c's 3 outranks the comparison's 5. Damage is usually WHY the comparison
+     * failed -- a truncated archive is missing its last members -- and a 5
+     * would report the symptom and hide the cause, leaving a script that cares
+     * to run -c a second time to find out. The report is still written in
+     * full; only the status says which finding comes first.
+     */
+    return damaged ? TMD_EXIT_CHECK : status;
 }

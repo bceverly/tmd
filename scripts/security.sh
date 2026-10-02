@@ -22,6 +22,7 @@
 #   7. the sanitizers                  the real thing, at runtime
 #   8. a short fuzz run                the real thing, on inputs nobody wrote
 #   9. gitleaks                        committed secrets
+#  10. MITRE's "Lucky 13"              the unforgivable classes, one by one
 #
 # Anything not installed is reported as skipped rather than failing the run.
 set -uo pipefail
@@ -293,6 +294,22 @@ if command -v gitleaks > /dev/null 2>&1; then
 else
   skip "gitleaks is not installed"
   note "see scripts/install-dev.sh, which installs a pinned release"
+fi
+
+# ---------------------------------------------------------------------------
+section "MITRE's \"Lucky 13\" — the unforgivable vulnerabilities"
+# Christey's thirteen classes from MITRE's "Unforgivable Vulnerabilities"
+# (2007), each checked or ruled out with a reason; scripts/lucky13.sh has the
+# detail and `make lucky13` runs it alone.
+if scripts/lucky13.sh > "$REPORTS/lucky13.log" 2>&1; then
+  ok "all 13 accounted for, none found"
+  if grep -q 'Skipped' "$REPORTS/lucky13.log"; then
+    note "some runtime checks were skipped; see $REPORTS/lucky13.log"
+  fi
+else
+  bad "a Lucky 13 check failed"
+  grep -E '✗' "$REPORTS/lucky13.log" | sed 's/^/      /'
+  note "see $REPORTS/lucky13.log"
 fi
 
 # ---------------------------------------------------------------------------

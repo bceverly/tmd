@@ -273,6 +273,43 @@ same path more than once and extraction keeps only the last. The summary keeps
 describing the whole archive and adds a
 .B matched
 line. When nothing matches, the exit status is 4.
+.SS Excluding, and size bounds
+.B \-\-exclude
+leaves out the members that match it, and may be repeated. It follows the
+.B \-m
+rules with one difference: a pattern without a slash matches any component of
+the path, not only the last, so
+.B \-\-exclude=Logs
+drops every directory named Logs together with everything under it, as
+.B "tar \-\-exclude"
+does. A pattern with a slash names a place in the tree:
+.B */Logs
+drops each Logs directory and its contents, while
+.B */Logs/*
+drops the contents and keeps the directory member. Exclusion is checked first
+and wins over
+.BR \-m .
+.PP
+.B \-\-min\-size
+and
+.B \-\-max\-size
+bound the extracted size, both inclusive. K, M, G and T are powers of 1024, as
+.B \-H
+prints them.
+.SS Comparing a subset
+.BR \-m ,
+.BR \-\-exclude ,
+the date range and the size bounds narrow
+.B \-\-diff
+on both sides, so comparing one subtree of two archives is a single command.
+Under
+.BR \-\-verify ,
+.B \-m
+and
+.B \-\-exclude
+apply to the archive and the manifest alike; the date range and the size bounds
+are refused, because a manifest line records no date and need not record a
+size, and filtering only the archive would report what it left out as missing.
 .SS Date ranges
 .B \-\-mtime\-before
 and
@@ -402,6 +439,18 @@ missing, or when there is non\-zero data after it. Both the signed and the
 unsigned checksum convention are accepted, because tar's own history is
 ambiguous about whether the header bytes were signed and rejecting one of them
 means calling a perfectly good archive corrupt.
+.PP
+Under
+.B \-\-diff
+and
+.BR \-\-verify ,
+.B \-c
+checks each archive the same way, and damage outranks a difference: the exit
+status is 3, not 5, because a damaged archive \- a truncated one is missing its
+last members \- usually fails the comparison for that reason, and 5 would hide
+the cause. The comparison report is still written, and standard error says what
+the damage was. When several outcomes apply, the order is 1, then 3, then 5,
+then 4.
 .PP
 Damage that is not fatal is reported as a warning on standard error and the read
 continues: a single bad header does not stop the members after it from being

@@ -27,7 +27,10 @@ enum {
     OPT_HASH,
     OPT_MANIFEST,
     OPT_MTIME_BEFORE,
-    OPT_MTIME_AFTER
+    OPT_MTIME_AFTER,
+    OPT_EXCLUDE,
+    OPT_MIN_SIZE,
+    OPT_MAX_SIZE
 };
 
 /* --- the three expansions of the option table --------------------------- */
@@ -190,9 +193,11 @@ void tmd_print_usage(FILE *out)
     (void)fprintf(out, "  %-24s %s\n", "1", "the archive could not be read");
     (void)fprintf(out, "  %-24s %s\n", "2", "the command line was wrong");
     (void)fprintf(out, "  %-24s %s\n", "3",
-                  "--check found damage: a bad checksum or a truncated archive");
+                  "--check found damage: a bad checksum or a truncated archive "
+                  "(outranks 5)");
     (void)fprintf(out, "  %-24s %s\n", "4",
-                  "--match or a date range was given and nothing matched");
+                  "a filter (--match, --exclude, a date or size bound) "
+                  "selected nothing");
     (void)fprintf(out, "  %-24s %s\n", "5",
                   "--diff or --verify found differences");
 
@@ -419,6 +424,55 @@ static bool parse_date(const char *s, bool local, int64_t *out)
     return true;
 }
 
+/*
+ * A size for --min-size and --max-size: digits, then optionally K, M, G or T
+ * in either case, each a power of 1024 -- the same units -H prints, so a size
+ * read off a -H listing can be typed back in. A trailing "B" or "iB" is
+ * accepted and changes nothing ("10MB", "10MiB"), because people type them.
+ */
+static bool parse_size(const char *s, uint64_t *out)
+{
+    uint64_t value = 0;
+    unsigned shift = 0;
+    bool     digits = false;
+
+    for (; *s >= '0' && *s <= '9'; s++)
+    {
+        if (value > (UINT64_MAX - 9) / 10)
+        {
+            return false;
+        }
+        value = value * 10 + (uint64_t)(*s - '0');
+        digits = true;
+    }
+    if (!digits)
+    {
+        return false;
+    }
+    switch (*s)
+    {
+    case 'k': case 'K': shift = 10; s++; break;
+    case 'm': case 'M': shift = 20; s++; break;
+    case 'g': case 'G': shift = 30; s++; break;
+    case 't': case 'T': shift = 40; s++; break;
+    default: break;
+    }
+    if (shift > 0 && (*s == 'i' || *s == 'I'))
+    {
+        s++;
+    }
+    if (*s == 'b' || *s == 'B')
+    {
+        s++;
+    }
+    if (*s != '\0' || (shift > 0 && value > (UINT64_MAX >> shift)))
+    {
+        return false;
+    }
+    *out = value << shift;
+    return true;
+}
+
 static bool parse_output_type(const char *s, enum tmd_output *out)
 {
     static const struct {
@@ -577,6 +631,38 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         case OPT_MTIME_BEFORE:
             before = optarg; /* parsed below, once --local is known */
             break;
+        case OPT_EXCLUDE:
+            /* Repeatable, and bounded by argc for the same reason -m is. */
+            if (!cli->options.exclude)
+            {
+                cli->options.exclude = tmd_xcalloc((size_t)argc,
+                                                   sizeof(*cli->options.exclude));
+            }
+            cli->options.exclude[cli->options.nexclude++] = optarg;
+            break;
+        case OPT_MIN_SIZE:
+        case OPT_MAX_SIZE:
+        {
+            uint64_t size;
+
+            if (!parse_size(optarg, &size))
+            {
+                return bad_usage("cannot read --%s \"%s\" — expected a number of "
+                                 "bytes, optionally with K, M, G or T",
+                                 c == OPT_MIN_SIZE ? "min-size" : "max-size",
+                                 optarg);
+            }
+            if (c == OPT_MIN_SIZE)
+            {
+                cli->options.have_min_size = true;
+                cli->options.min_size = size;
+            } else
+            {
+                cli->options.have_max_size = true;
+                cli->options.max_size = size;
+            }
+            break;
+        }
         case OPT_MTIME_AFTER:
             after = optarg;
             break;
@@ -703,6 +789,21 @@ int tmd_parse_args(int argc, char **argv, struct tmd_cli *cli)
         return bad_usage("--mtime-after %s is not earlier than --mtime-before "
                          "%s, so nothing could match", after, before);
     }
+    if (cli->options.have_min_size && cli->options.have_max_size &&
+        cli->options.min_size > cli->options.max_size)
+    {
+        return bad_usage("--min-size is larger than --max-size, so nothing "
+                         "could match");
+    }
+    /* The same reasoning as for dates, below: a manifest line need not state a
+     * size, so narrowing the archive side by size and not the manifest side
+     * would report every member outside the bounds as missing. */
+    if (cli->options.verify &&
+        (cli->options.have_min_size || cli->options.have_max_size))
+    {
+        return bad_usage("--min-size and --max-size cannot narrow --verify: a "
+                         "manifest line need not record a size");
+    }
     /* A manifest line has no date to filter on, so the archive side would be
      * narrowed and the manifest side not: every member outside the range
      * would be reported missing. */
@@ -776,4 +877,7 @@ void tmd_free_args(struct tmd_cli *cli)
     free((void *)cli->options.match);
     cli->options.match = NULL;
     cli->options.nmatch = 0;
+    free((void *)cli->options.exclude);
+    cli->options.exclude = NULL;
+    cli->options.nexclude = 0;
 }

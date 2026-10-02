@@ -191,7 +191,16 @@ run_over_corpus() {
     "$binary" -f - < "$archive" > /dev/null 2>&1
   done
   # The argument-handling paths too.
-  "$binary" > /dev/null 2>&1
+  #
+  # The bare run gets /dev/null for stdin, explicitly. With no -f, tmd reads
+  # stdin whenever it is not a terminal -- that is what makes `... | tmd` work --
+  # so a bare run that inherited stdin waited for an archive on it. From a
+  # terminal or under CI (stdin /dev/null) that never showed; run from anything
+  # that hands its children an open pipe or socket, it hung for good, holding
+  # the memcheck lock, and every `make test` after it failed with "another
+  # memcheck is already running". Empty stdin exercises the same no-archive
+  # path and always ends.
+  "$binary" > /dev/null 2>&1 < /dev/null
   "$binary" --help > /dev/null 2>&1
   "$binary" --version > /dev/null 2>&1
   "$binary" --format=nonsense -f "$dir/gnu.tar" > /dev/null 2>&1

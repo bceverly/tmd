@@ -143,6 +143,9 @@ Options:
   -q, --quiet              do not write warnings about damaged headers to standard error
   -v, --verbose            warn once per member with an absolute path, not once per archive
   -m, --match=PATTERN      show only members matching PATTERN; repeatable. A pattern with a '/' matches that path and everything under it, one without it the basename
+      --exclude=PATTERN    leave out members matching PATTERN, and everything under a directory it names; repeatable, and it wins over -m
+      --min-size=SIZE      show only members at least SIZE bytes; K, M, G and T suffixes are powers of 1024
+      --max-size=SIZE      show only members at most SIZE bytes
       --mtime-before=DATE  show only members modified before DATE (YYYY[-MM[-DD[ HH:MM[:SS]]]] or @EPOCH, UTC unless --local)
       --mtime-after=DATE   show only members modified at or after DATE
       --hash=ALGO          read the content of the members shown and print its md5 or sha256 (slower: it reads data, not just headers)
@@ -178,8 +181,11 @@ worked. `-f -` remains valid and means exactly the same thing, for scripts that
 would rather be explicit.
 
 **Exit status.** `0` the archive was read · `1` it could not be read · `2` the
-command line was wrong · `3` `--check` found damage · `4` `--match` or a date
-range selected no member · `5` `--diff` or `--verify` found differences. Distinct statuses rather
+command line was wrong · `3` `--check` found damage · `4` a filter (`-m`,
+`--exclude`, a date range or a size bound) selected no member · `5` `--diff` or
+`--verify` found differences. When more than one applies, the order is 1, then
+3, then 5, then 4: a file that could not be read is the first thing to know, and
+damage comes before a difference because it is usually the cause of one. Distinct statuses rather
 than one, because the difference matters to a script: a mistyped flag is the
 caller's bug, an unreadable archive is the file's problem, a bad checksum is a
 *finding* — the tool worked perfectly and the archive is damaged — and the last
@@ -294,6 +300,37 @@ found damage):
 $ tmd -f backup.tar -m secrets.env || echo "not in this archive"
 not in this archive
 ```
+
+### `--exclude`, and the size bounds
+
+```console
+$ tmd -f account.tar --exclude=Logs
+$ tmd -f account.tar --exclude='*/Logs' --exclude='*.tmp' -S
+$ tmd -f backup.tar --min-size=100M
+$ tmd -f backup.tar --max-size=0 -m '*.pdf'      # empty PDFs
+```
+
+`--exclude` leaves out what matches it, and is repeatable. It uses `-m`'s rules
+with one difference that matters: **a pattern without a slash matches any
+component of the path, not just the last**, so `--exclude=Logs` drops every
+directory named `Logs` and everything beneath it — 4.8 million messages, say —
+as `tar --exclude` does. Matching the basename alone, as `-m` does, would drop
+the directory member and list its contents. A pattern with a slash names a
+place in the tree, as for `-m`: `--exclude='*/Logs'` drops each `Logs` directory
+and its contents, while `--exclude='*/Logs/*'` drops the contents and keeps the
+one line for the directory itself.
+
+Exclusion is checked first and wins: `-m 'home/' --exclude=Logs` is everything
+under `home/` except the logs.
+
+`--min-size` and `--max-size` bound the extracted size, both inclusive. `K`,
+`M`, `G` and `T` are powers of 1024, the same units `-H` prints, so a size read
+off a `-H` listing can be typed back in; a trailing `B` or `iB` is accepted.
+
+All of them are filters like `-m`: they combine with it and with the date range,
+the summary keeps describing the whole archive with a `matched N of M` line,
+and exit status 4 means nothing was selected. `--hash` reads only what they
+select.
 
 ### `--mtime-before` and `--mtime-after`, a date range
 
@@ -471,8 +508,22 @@ file you may not have written.
 
 ### Both report the same way
 
-`-m` narrows what is compared. `-t JSON` gives the whole comparison as a
-document with a `matches` boolean, so a script reads one field:
+**The filters narrow what is compared, on both sides.** `-m` and `--exclude`
+apply to both archives under `--diff`, and to the archive and the manifest under
+`--verify`, so comparing one subtree across two deliveries is one command:
+
+```console
+$ tmd --diff -f rambler-1.0.txz -f rambler-1.1.txz -m 'usr/local/etc/'
+$ tmd --diff --hash=sha256 -f old.tar -f new.tar --exclude='*/Logs'
+```
+
+The date range and the size bounds also narrow `--diff`. They are refused with
+`--verify`, because a manifest line records no date and need not record a size:
+filtering the archive and not the manifest would report every member it left
+out as missing.
+
+`-t JSON` gives the whole comparison as a document with a `matches` boolean, so
+a script reads one field:
 
 ```console
 $ tmd -f old.tar -f new.tar --diff -t JSON | jq '.diff.matches'
@@ -486,6 +537,12 @@ false
 ```console
 $ tmd -f nightly.tar --verify=manifest.txt || echo "backup does not match"
 ```
+
+**With `-c`, damage outranks a difference: 3 beats 5.** A truncated archive is
+missing its last members, so it fails a comparison too — and a 5 would report
+that symptom and hide the cause. Under `-c` the comparison report is still
+written in full, stderr says what the damage was, and the exit status is 3.
+Without `-c`, damage is not checked and only the comparison decides.
 
 ### Extraction safety — would this archive escape?
 
@@ -1191,7 +1248,7 @@ locally either.
 make security
 ```
 
-Nine checks, ordered by how close they sit to the threat — this program parses
+Ten checks, ordered by how close they sit to the threat — this program parses
 a file somebody else produced, so every byte of a tar header is
 attacker-controlled:
 
@@ -1206,9 +1263,46 @@ attacker-controlled:
 | the sanitizers | the real thing, at runtime |
 | a fuzz run | the real thing, on inputs nobody wrote |
 | `gitleaks` | committed secrets, across the whole history |
+| MITRE's "Lucky 13" | the thirteen "unforgivable" vulnerability classes, each checked or ruled out with a reason |
 
 CI runs the same script, plus CodeQL with the `security-extended` query pack and
 a longer fuzz run (15 minutes on the weekly schedule).
+
+### MITRE's "Lucky 13"
+
+```bash
+make lucky13
+```
+
+Steve Christey's [*Unforgivable Vulnerabilities*](https://cwe.mitre.org/documents/unforgivable_vulns/)
+(MITRE, Black Hat USA 2007) names thirteen vulnerability classes so well
+documented, so obvious and so easy to find — "found in five minutes" — that
+shipping one is unforgivable. `scripts/lucky13.sh` accounts for every one of
+them by number, so the report cannot quietly leave out the ones that do not
+apply:
+
+| # | Class | CWE | How it is checked here |
+|---|---|---|---|
+| 1 | buffer overflow | 120 | no unbounded copy, format or scan function in `src/`; 64 KiB of `A` in every argument; megabyte-long names, link targets and owner names in every output mode |
+| 2 | cross-site scripting | 79 | not applicable (no HTML); the analogue — a member name built to break out of the JSON or CSV — is checked to come back intact |
+| 3 | directory traversal | 23 | every file-opening call in `src/` is on an allowlist of three, none of them a path from the archive; a traversing archive writes nothing and is reported |
+| 4 | remote file inclusion | 98 | no `system`, `popen`, `dlopen` or shell; the one `execvp` runs a decompressor from a static const table |
+| 5 | SQL injection | 89 | not applicable (no database), and checked to stay that way |
+| 6 | world-writable files | 276, 279 | nothing in the tree is world-writable; install recipes set explicit modes; `-o` under `umask 000` creates `0644` |
+| 7 | direct request | 425 | not applicable: no server and no administrator functions |
+| 8 | authentication bypass | 472 | not applicable: tmd authenticates nobody |
+| 9 | grow-your-own crypto | 327 | **applies** — `--hash` is tmd's own MD5 and SHA-256 — so both are checked against Python's `hashlib`, and no encryption or random numbers may appear |
+| 10 | privilege escalation | 271 | no `set*uid` calls; never installed setuid; the decompressor is found on `PATH`, which is safe only because of that |
+| 11 | symlink following | 61 | no temporary files, no `/tmp`; an archive planting a symlink out of the tree is reported |
+| 12 | hard-coded password | 259 | no credential-shaped literal in the source or scripts; `gitleaks` covers the history |
+| 13 | integer overflow | 190 | hand-built headers with sizes of 2^33, 2^64 and 2^88, negative sizes, a 2^64−1 sparse map and an overflowing pax record length, in nine modes |
+
+Static checks read the source with comments removed by the compiler's own
+preprocessor, so a comment explaining why `strcpy` is not used is not a use of
+it. Runtime checks build their hostile archives with Python; without `python3`
+they report themselves skipped rather than passed. Every check was confirmed
+to fail on a deliberately broken tree before it was trusted to pass on this
+one.
 
 The internal limits are worth knowing about, because they are what stops a
 hostile archive from turning a diagnostic into an out-of-memory kill: a GNU long
@@ -1227,6 +1321,7 @@ Run `make` with no arguments for the full list. The ones you will use:
 | `make test` | unit + end-to-end tests, sanitizers, and the coverage gate |
 | `make lint` | the compiler with `-Werror`, `-fanalyzer`, cppcheck, clang-tidy, shellcheck, the copyright audit, and the manpage and README freshness checks |
 | `make security` | the security scanners, locally |
+| `make lucky13` | MITRE's thirteen "unforgivable" vulnerability classes, one by one |
 | `make man` | force the manpage to be regenerated from `--help` |
 | `make docs` | regenerate the manpage **and** the README's Usage block |
 | `make coverage` | measure coverage and refresh the README badge |

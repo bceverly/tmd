@@ -323,6 +323,10 @@ security: build ## Run the same security scanners CI runs, locally
 # The manpage and the README's Usage block both restate `tmd --help`. Both are
 # generated, and `make lint` checks both, so adding an option updates all three
 # from the one definition in src/options.def.
+.PHONY: lucky13
+lucky13: build ## Check MITRE's "Lucky 13" unforgivable vulnerabilities, one by one
+	@scripts/lucky13.sh
+
 .PHONY: man
 man: docs ## Force the manpage to be regenerated from --help
 

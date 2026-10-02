@@ -79,5 +79,6 @@ void test_tar(void);
 void test_pax(void);
 void test_render(void);
 void test_hash(void);
+void test_compare(void);
 
 #endif /* TMD_TEST_H */

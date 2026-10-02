@@ -851,12 +851,83 @@ bool tmd_path_matches(const char *path, const char *pattern)
 
 bool tmd_options_filtering(const struct tmd_options *opt)
 {
-    return opt->nmatch > 0 || opt->have_mtime_before || opt->have_mtime_after;
+    return opt->nmatch > 0 || opt->nexclude > 0 || opt->have_mtime_before ||
+           opt->have_mtime_after || opt->have_min_size || opt->have_max_size;
+}
+
+/*
+ * --exclude's rule.
+ *
+ * A pattern with a slash is a place in the tree, exactly as for -m, and
+ * whole_path_matches already takes everything under it.
+ *
+ * A pattern without one is a NAME, and -m matches a name against the last
+ * component only -- right for finding a file, wrong for leaving one out. What
+ * somebody means by excluding "Logs" is the Logs directory and everything in
+ * it, which is what tar's --exclude does; matching the basename alone would
+ * drop the directory member and list its 4.8 million contents. So here the name
+ * is tried against every component.
+ */
+bool tmd_path_excluded(const char *path, const char *pattern)
+{
+    const char *p = path;
+
+    if (strchr(pattern, '/') != NULL)
+    {
+        return whole_path_matches(path, pattern);
+    }
+    while (*p)
+    {
+        const char *end = strchr(p, '/');
+        size_t      len = end ? (size_t)(end - p) : strlen(p);
+
+        if (len > 0)
+        {
+            char *component = tmd_xstrndup(p, len);
+            bool  hit = fnmatch(pattern, component, 0) == 0;
+
+            free(component);
+            if (hit)
+            {
+                return true;
+            }
+        }
+        if (!end)
+        {
+            break;
+        }
+        p = end + 1;
+    }
+    return false;
+}
+
+bool tmd_path_selected(const struct tmd_options *opt, const char *path)
+{
+    size_t i;
+
+    for (i = 0; i < opt->nexclude; i++)
+    {
+        if (tmd_path_excluded(path, opt->exclude[i]))
+        {
+            return false;
+        }
+    }
+    if (opt->nmatch == 0)
+    {
+        return true;
+    }
+    for (i = 0; i < opt->nmatch; i++)
+    {
+        if (tmd_path_matches(path, opt->match[i]))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool tmd_entry_selected(const struct tmd_options *opt, const struct tmd_entry *e)
 {
-    size_t i;
 
     if (opt->have_mtime_before || opt->have_mtime_after)
     {
@@ -873,18 +944,15 @@ bool tmd_entry_selected(const struct tmd_options *opt, const struct tmd_entry *e
             return false;
         }
     }
-    if (opt->nmatch == 0)
+    if (opt->have_min_size && e->size < opt->min_size)
     {
-        return true;
+        return false;
     }
-    for (i = 0; i < opt->nmatch; i++)
+    if (opt->have_max_size && e->size > opt->max_size)
     {
-        if (tmd_path_matches(e->path ? e->path : "", opt->match[i]))
-        {
-            return true;
-        }
+        return false;
     }
-    return false;
+    return tmd_path_selected(opt, e->path ? e->path : "");
 }
 
 /*

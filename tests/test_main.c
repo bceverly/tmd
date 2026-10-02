@@ -78,6 +78,7 @@ int main(void)
     test_pax();
     test_render();
     test_hash();
+    test_compare();
 
     if (report)
     {

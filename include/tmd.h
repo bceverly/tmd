@@ -571,6 +571,21 @@ struct tmd_options {
     int64_t mtime_before;
     bool    have_mtime_after;
     int64_t mtime_after;
+
+    /*
+     * --exclude: leave out members matching any of these, by -m's rules --
+     * except that a pattern without a slash matches ANY component of the path,
+     * not only the last, so excluding "Logs" drops a Logs directory and
+     * everything beneath it. Exclusion is checked first and wins.
+     */
+    const char **exclude;
+    size_t       nexclude;
+
+    /* --min-size / --max-size, on the extracted size, both inclusive. */
+    bool     have_min_size;
+    uint64_t min_size;
+    bool     have_max_size;
+    uint64_t max_size;
 };
 
 const char *tmd_format_name(enum tmd_format f);

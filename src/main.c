@@ -106,6 +106,29 @@ static void report_absolute_paths(const struct tmd_archive *a,
                   n == 1 ? "" : "s");
 }
 
+/*
+ * Which of two exit statuses wins: 1, then 3, then 5, then 4, then 0.
+ *
+ * Not the larger number. That was the rule, and it made a damaged archive's 3
+ * outrank another archive's 1 -- "one of these could not be read at all" lost
+ * to "one of these has a bad checksum". The order is the one the manpage
+ * states: unreadable first, damage before a difference because damage is
+ * usually the cause of one, and "nothing matched" last because it is only
+ * worth saying when nothing worse happened.
+ */
+static int exit_rank(int status)
+{
+    switch (status)
+    {
+    case TMD_EXIT_ERROR:   return 5;
+    case TMD_EXIT_USAGE:   return 4;
+    case TMD_EXIT_CHECK:   return 3;
+    case TMD_EXIT_DIFFER:  return 2;
+    case TMD_EXIT_NOMATCH: return 1;
+    default:               return 0;
+    }
+}
+
 /* Reads one archive into the renderer. Returns the exit status this archive
  * deserves; the caller keeps the worst one. */
 static int dump_archive(const char *path, struct tmd_render *rd,
@@ -201,11 +224,14 @@ static int dump_archive(const char *path, struct tmd_render *rd,
         report_archive_warnings(archive, opt, warnings_reported);
         /* A missing end-of-archive marker means the file was cut short, which
          * is a finding whether or not every header that survived is intact. */
-        if (opt->check && (archive->bad_checksums > 0 || !archive->eof_marker ||
-                           archive->trailing_garbage))
+        if (opt->check && status == TMD_EXIT_OK &&
+            (archive->bad_checksums > 0 || !archive->eof_marker ||
+             archive->trailing_garbage))
         {
+            /* Not over a decompression failure: "only part of this could be
+             * read" is the more important answer, and it is already 1. */
             status = TMD_EXIT_CHECK;
-                           }
+        }
     }
 
     tmd_reader_free(reader);
@@ -316,7 +342,7 @@ int main(int argc, char **argv)
         /* The worst outcome wins, and one unreadable archive does not stop the
          * others: `tmd -f a.tar -f b.tar` should report on b even when a is
          * missing. */
-        if (one > status)
+        if (exit_rank(one) > exit_rank(status))
         {
             status = one;
         }

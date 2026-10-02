@@ -50,6 +50,14 @@ TMD_OPT('v', "verbose",       no_argument,       NULL,
 TMD_OPT('m', "match",         required_argument, "PATTERN",
         "show only members matching PATTERN; repeatable. A pattern with a '/' "
         "matches that path and everything under it, one without it the basename")
+TMD_OPT(OPT_EXCLUDE, "exclude", required_argument, "PATTERN",
+        "leave out members matching PATTERN, and everything under a directory "
+        "it names; repeatable, and it wins over -m")
+TMD_OPT(OPT_MIN_SIZE, "min-size", required_argument, "SIZE",
+        "show only members at least SIZE bytes; K, M, G and T suffixes are "
+        "powers of 1024")
+TMD_OPT(OPT_MAX_SIZE, "max-size", required_argument, "SIZE",
+        "show only members at most SIZE bytes")
 TMD_OPT(OPT_MTIME_BEFORE, "mtime-before", required_argument, "DATE",
         "show only members modified before DATE (YYYY[-MM[-DD[ HH:MM[:SS]]]] "
         "or @EPOCH, UTC unless --local)")

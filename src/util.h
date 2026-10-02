@@ -136,6 +136,11 @@ bool tmd_path_matches(const char *path, const char *pattern);
  * any, and fall inside the range, when there is one.
  */
 bool tmd_entry_selected(const struct tmd_options *opt, const struct tmd_entry *e);
+/* The path half of that: --exclude, then -m. For a manifest line, which has a
+ * path and nothing else to filter on. */
+bool tmd_path_selected(const struct tmd_options *opt, const char *path);
+/* Does --exclude's `pattern` remove this path? See tmd_options.exclude. */
+bool tmd_path_excluded(const char *path, const char *pattern);
 /* True when anything narrows the selection -- a pattern or a date bound -- and
  * so "nothing was selected" is an answer worth an exit status. */
 bool tmd_options_filtering(const struct tmd_options *opt);

@@ -345,10 +345,67 @@ static void test_date_range(void)
     }
 }
 
+static void test_exclude_and_size(void)
+{
+    struct tmd_options opt;
+    struct tmd_entry   e;
+    const char        *ex[2];
+    const char        *pat[1];
+
+    TEST_CASE("--exclude with a bare name drops that name at any depth, and all beneath it");
+    CHECK(tmd_path_excluded("acct/Logs/", "Logs"));
+    CHECK(tmd_path_excluded("acct/Logs/2016/msg1", "Logs"));
+    CHECK(tmd_path_excluded("Logs", "Logs"));
+    CHECK(tmd_path_excluded("a/b/c.tmp", "*.tmp"));
+    CHECK(!tmd_path_excluded("acct/Logsheet.txt", "Logs"));
+    CHECK(!tmd_path_excluded("acct/Inbox/a.eml", "Logs"));
+
+    TEST_CASE("--exclude with a slash takes -m's subtree rule");
+    CHECK(tmd_path_excluded("acct/Logs/2016/msg1", "*/Logs/*"));
+    CHECK(!tmd_path_excluded("acct/Logs/", "*/Logs/*")); /* the contents, not the dir */
+    CHECK(tmd_path_excluded("acct/Logs/", "*/Logs"));
+    CHECK(tmd_path_excluded("/acct/Logs/x", "acct/Logs"));
+    CHECK(!tmd_path_excluded("acct/Logsheet", "acct/Logs"));
+
+    memset(&opt, 0, sizeof(opt));
+    memset(&e, 0, sizeof(e));
+    TEST_CASE("--exclude wins over -m");
+    pat[0] = "acct/";
+    ex[0] = "Logs";
+    opt.match = pat;
+    opt.nmatch = 1;
+    opt.exclude = ex;
+    opt.nexclude = 1;
+    e.path = (char *)"acct/Inbox/a.eml";
+    CHECK(tmd_entry_selected(&opt, &e));
+    e.path = (char *)"acct/Logs/msg";
+    CHECK(!tmd_entry_selected(&opt, &e));
+    CHECK(!tmd_path_selected(&opt, "acct/Logs/msg"));
+    CHECK(tmd_options_filtering(&opt));
+
+    TEST_CASE("--min-size and --max-size are inclusive bounds on the extracted size");
+    memset(&opt, 0, sizeof(opt));
+    e.path = (char *)"f";
+    opt.have_min_size = true;
+    opt.min_size = 1024;
+    opt.have_max_size = true;
+    opt.max_size = 2048;
+    e.size = 1024;
+    CHECK(tmd_entry_selected(&opt, &e));
+    e.size = 2048;
+    CHECK(tmd_entry_selected(&opt, &e));
+    e.size = 1023;
+    CHECK(!tmd_entry_selected(&opt, &e));
+    e.size = 2049;
+    CHECK(!tmd_entry_selected(&opt, &e));
+    CHECK(tmd_options_filtering(&opt));
+}
+
 void test_hash(void)
 {
     test_vectors();
     test_reader_hashing();
     test_owners_and_nesting();
     test_date_range();
+    test_exclude_and_size();
 }
