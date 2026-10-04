@@ -83,7 +83,7 @@ EXPLICIT="$VERSION_ARG"
 if [ -n "$EXPLICIT" ]; then
   # Both "1.2.3.4" and "v1.2.3.4" are accepted; the tag always gets the "v".
   EXPLICIT="${EXPLICIT#v}"
-  echo "$EXPLICIT" | grep -qE "$VERSION_PATTERN" \
+  grep -qE "$VERSION_PATTERN" <<< "$EXPLICIT" \
     || die "VERSION must look like 1.2.3.4 or v1.2.3.4 (four numbers), got '${VERSION_ARG}'."
   NEXT="$EXPLICIT"
   if [ -n "$LATEST" ]; then

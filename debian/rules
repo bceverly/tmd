@@ -1,4 +1,7 @@
 #!/usr/bin/make -f
+# Copyright (c) 2026 Bryan C. Everly
+# SPDX-License-Identifier: BSD-2-Clause
+#
 # =============================================================================
 # tmd — Debian packaging
 #

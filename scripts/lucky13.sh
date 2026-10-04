@@ -301,7 +301,7 @@ fi
 section "5. SQL injection (CWE-89)"
 # ---------------------------------------------------------------------------
 na "not applicable: tmd has no database and builds no query in any language"
-if code_grep '\b(sqlite3_|mysql_|PQexec|SQLExec)' | grep -q .; then
+if [ -n "$(code_grep '\b(sqlite3_|mysql_|PQexec|SQLExec)')" ]; then
   bad "a database API appeared in src/; this line needs a real check now"
 else
   ok "and none has appeared: no database API is called anywhere in src/"

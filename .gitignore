@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Bryan C. Everly
+# SPDX-License-Identifier: BSD-2-Clause
+#
 # ---------------------------------------------------------------------------
 # tmd — C (gnu make), Debian packaging, Launchpad PPA
 #
@@ -129,3 +132,7 @@ cscope.*
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- Claude Code session state ----------------------------------------------
+# A lock the assistant's scheduler leaves behind; per-session, never source.
+.claude/scheduled_tasks.lock

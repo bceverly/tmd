@@ -117,10 +117,17 @@ elif command -v hardening-check > /dev/null 2>&1; then
 elif command -v readelf > /dev/null 2>&1; then
   # The parts that can be seen without devscripts installed.
   missing=()
-  readelf -d bin/tmd 2>/dev/null | grep -q "BIND_NOW" || missing+=("BIND_NOW")
-  readelf -lW bin/tmd 2>/dev/null | grep -q "GNU_RELRO" || missing+=("RELRO")
-  readelf -sW bin/tmd 2>/dev/null | grep -q "__stack_chk_fail" || missing+=("stack protector")
-  readelf -sW bin/tmd 2>/dev/null | grep -q "_chk@" || missing+=("_FORTIFY_SOURCE")
+  # Captured, then matched. `readelf ... | grep -q` under pipefail fails
+  # whenever grep finds its match before readelf has finished writing -- and
+  # the symbol table is long, so the stack-protector and fortify checks could
+  # report a feature missing that was there.
+  dyn="$(readelf -d bin/tmd 2>/dev/null)"
+  segs="$(readelf -lW bin/tmd 2>/dev/null)"
+  syms="$(readelf -sW bin/tmd 2>/dev/null)"
+  grep -q "BIND_NOW" <<< "$dyn" || missing+=("BIND_NOW")
+  grep -q "GNU_RELRO" <<< "$segs" || missing+=("RELRO")
+  grep -q "__stack_chk_fail" <<< "$syms" || missing+=("stack protector")
+  grep -q "_chk@" <<< "$syms" || missing+=("_FORTIFY_SOURCE")
   if [ ${#missing[@]} -eq 0 ]; then
     ok "RELRO, BIND_NOW, the stack protector and fortified calls are all present"
   else

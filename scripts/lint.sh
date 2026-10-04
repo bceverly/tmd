@@ -272,9 +272,15 @@ while IFS= read -r file; do
   checked=$((checked + 1))
   head_text="$(head -12 "$file")"
   problem=""
-  if ! printf '%s' "$head_text" | grep -Eq "$COPYRIGHT_RE"; then
+  # Matched from a here-string, never `printf ... | grep -q`. Under pipefail
+  # that pipeline fails whenever grep -q finds its match and exits while
+  # printf is still writing -- printf takes SIGPIPE -- so a header that was
+  # plainly there was now and then reported missing, naming a different file
+  # each time and never reproducing on a second run. The same shape is
+  # avoided everywhere in this script.
+  if ! grep -Eq "$COPYRIGHT_RE" <<< "$head_text"; then
     problem="no \"Copyright (c) <year> $EXPECTED_OWNER\" in the first 12 lines"
-  elif ! printf '%s' "$head_text" | grep -qF "$EXPECTED_SPDX"; then
+  elif ! grep -qF "$EXPECTED_SPDX" <<< "$head_text"; then
     problem="no \"$EXPECTED_SPDX\" in the first 12 lines"
   fi
   if [ -n "$problem" ]; then
@@ -291,8 +297,33 @@ done < <(
     # The git hooks carry no extension, so the pattern above misses them --
     # and they are shipped source like everything else.
     find .githooks -type f 2>/dev/null
-  } | sort
+    # The hand-written files that are not C or shell. The build, the packaging
+    # and CI are as much this project's source as src/ is, and for a long time
+    # none of them was audited: the pattern above looked only at code.
+    printf '%s\n' Makefile debian/rules debian/control debian/source/options \
+                  .gitignore README.md ROADMAP.md SECURITY.md
+    find .github -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null
+    # And a catch-all, so that a new KIND of file cannot slip past the way the
+    # YAML did: anything code-shaped anywhere in the tree, outside the build
+    # and analysis output, is held to the same rule.
+    find . \( -path ./.git -o -path ./.claude -o -path ./obj -o -path ./bin \
+              -o -path './.sanitize*' -o -path ./.coverage -o -path ./.fuzz \
+              -o -path ./.lint -o -path ./.security-reports -o -path ./debian/tmd \
+              -o -path ./debian/.debhelper \) -prune -o -type f \
+           \( -name '*.c' -o -name '*.h' -o -name '*.sh' -o -name '*.py' \
+              -o -name '*.yml' -o -name '*.yaml' -o -name '*.mk' -o -name '*.awk' \
+              -o -name '*.pl' -o -name '*.def' \) -print | sed 's#^\./##'
+  } | sort -u
 )
+# Deliberately NOT audited, each for a reason:
+#   LICENSE, debian/copyright   they ARE the copyright statement; the check
+#                               below makes sure they agree with the headers
+#   VERSION, debian/source/format, debian/signing-fingerprint
+#                               raw data read by cat, dpkg-source and gpg; a
+#                               comment line would be read as part of the value
+#   man/tmd.1, docs/badges/coverage.svg
+#                               generated -- the manpage carries the notice
+#                               from its generator, and is checked below
 
 if [ "$missing" -eq 0 ]; then
   ok "$checked source files carry the copyright and SPDX header"
@@ -348,7 +379,7 @@ if [ -f debian/signing-fingerprint ]; then
   PINNED_KEY="$(grep -vE '^[[:space:]]*(#|$)' debian/signing-fingerprint | head -1 | tr -d '[:space:]')"
   if [ -z "$PINNED_KEY" ]; then
     bad "debian/signing-fingerprint has no fingerprint in it"
-  elif ! printf '%s' "$PINNED_KEY" | grep -qE '^[0-9A-Fa-f]{40}$'; then
+  elif ! grep -qE '^[0-9A-Fa-f]{40}$' <<< "$PINNED_KEY"; then
     bad "debian/signing-fingerprint is not a 40-character fingerprint: $PINNED_KEY"
     note "a short key id is not enough — several of yours may share an address"
   else
@@ -357,7 +388,8 @@ if [ -f debian/signing-fingerprint ]; then
 else
   bad "debian/signing-fingerprint is missing — source packages would build unsigned"
 fi
-if ! ./bin/tmd --version 2>/dev/null | grep -qF "$EXPECTED_OWNER"; then
+version_text="$(./bin/tmd --version 2>/dev/null)"
+if ! grep -qF "$EXPECTED_OWNER" <<< "$version_text"; then
   if [ -x ./bin/tmd ]; then
     bad "the binary's --version output does not carry the copyright"
   else

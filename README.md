@@ -1,3 +1,8 @@
+<!--
+Copyright (c) 2026 Bryan C. Everly
+SPDX-License-Identifier: BSD-2-Clause
+-->
+
 <div align="center">
 
 # tmd
@@ -1402,7 +1407,11 @@ in these files were done by hand and are meant to stay.
 Every source file carries the same notice, and `make lint` is what keeps that
 true. It is not bureaucracy: the license grant on a BSD-2 project *is* the file
 header, and a file that reaches somebody without one has no license at all. The
-audit checks `src/`, `include/`, `tests/` and `scripts/` for
+audit checks the C and shell in `src/`, `include/`, `tests/` and `scripts/`, the
+git hooks, the `Makefile`, the Debian packaging, the CI workflows, `.gitignore`
+and the Markdown documents — plus any code-shaped file (`.c`, `.sh`, `.py`,
+`.yml`, …) anywhere else in the tree, so a new kind of file cannot slip past —
+for the notice, in whatever comment syntax the file uses:
 
 ```c
 /*
@@ -1414,6 +1423,12 @@ audit checks `src/`, `include/`, `tests/` and `scripts/` for
 and separately checks that `LICENSE`, `debian/copyright`, the manpage and the
 binary's own `--version` output all name the same person. The year may be a
 single year or a range, so bumping it does not mean touching every file.
+
+A handful of files are exempt, each for a reason written into `scripts/lint.sh`:
+`LICENSE` and `debian/copyright` *are* the copyright statement; `VERSION`,
+`debian/source/format` and `debian/signing-fingerprint` are raw data that a
+comment line would corrupt; and the manpage and the coverage badge are
+generated.
 
 ## Installing
 

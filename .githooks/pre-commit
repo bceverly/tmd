@@ -50,7 +50,7 @@ if [ "$LINT_STATUS" -ne 0 ]; then
 fi
 
 # A tool that is not installed passes by doing nothing. Not here.
-if printf '%s' "$LINT_OUTPUT" | grep -q 'Skipped:'; then
+if grep -q 'Skipped:' <<< "$LINT_OUTPUT"; then
   printf '%s\n' "$LINT_OUTPUT"
   printf '\n\033[91m✗ lint passed but skipped a tool — not committing\033[0m\n'
   printf '  A scanner that is not installed reports "skipped" and passes, which\n'
