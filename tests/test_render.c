@@ -822,10 +822,14 @@ static void test_stat_mode(void)
     }
     /* Three members share one second and the fourth is two minutes later --
      * the shape a release script leaves behind. */
-    e[0].path = (char *)"a"; e[0].size = 10;   e[0].data_size = 10;   e[0].stored_size = 1024; e[0].mtime.sec = 1700000000;
-    e[1].path = (char *)"b"; e[1].size = 20;   e[1].data_size = 20;   e[1].stored_size = 1024; e[1].mtime.sec = 1700000000;
-    e[2].path = (char *)"c"; e[2].size = 30;   e[2].data_size = 30;   e[2].stored_size = 1024; e[2].mtime.sec = 1700000000;
-    e[3].path = (char *)"d"; e[3].size = 5000; e[3].data_size = 5000; e[3].stored_size = 5632; e[3].mtime.sec = 1700000120;
+    e[0].path = (char *)"a"; e[0].size = 10;   e[0].data_size = 10;
+    e[0].stored_size = 1024; e[0].mtime.sec = 1700000000;
+    e[1].path = (char *)"b"; e[1].size = 20;   e[1].data_size = 20;
+    e[1].stored_size = 1024; e[1].mtime.sec = 1700000000;
+    e[2].path = (char *)"c"; e[2].size = 30;   e[2].data_size = 30;
+    e[2].stored_size = 1024; e[2].mtime.sec = 1700000000;
+    e[3].path = (char *)"d"; e[3].size = 5000; e[3].data_size = 5000;
+    e[3].stored_size = 5632; e[3].mtime.sec = 1700000120;
 
     TEST_CASE("--stat counts the members and their bytes");
     default_options(&opt);

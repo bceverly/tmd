@@ -7,15 +7,16 @@
 #
 #   make lint
 #
-# Six checks, in order of how likely they are to be the thing that is wrong:
+# Seven checks, in order of how likely they are to be the thing that is wrong:
 #
 #   1. the compiler, with every warning this project is clean under and -Werror
 #   2. gcc -fanalyzer, which does path-sensitive analysis and finds leaks and
 #      null dereferences the warning flags do not
 #   3. cppcheck, a second opinion from a different engine
 #   4. clang-tidy, a third
-#   5. the copyright audit — every source file carries the same notice
-#   6. shellcheck on every script, and the manpage freshness check
+#   5. the house style — brace placement and a 100-character line limit
+#   6. the copyright audit — every source file carries the same notice
+#   7. shellcheck on every script, and the manpage freshness check
 #
 # A tool that is not installed is reported as skipped rather than failing the
 # run. `make install-dev` installs all of them, and CI installs all of them, so
@@ -252,6 +253,28 @@ if [ -z "$BRACE_HITS" ]; then
 else
   bad "$(printf '%s\n' "$BRACE_HITS" | wc -l) opening brace(s) share a line with a statement"
   printf '%s\n' "$BRACE_HITS" | head -10 | sed 's/^/      /'
+fi
+
+# ---------------------------------------------------------------------------
+section "line length"
+#
+# No line of C is longer than 100 characters. Counted in characters rather
+# than bytes -- an em dash in a comment is one column on screen, not three --
+# which is why the locale is pinned to UTF-8 for this one awk.
+#
+# A long call is wrapped after an argument and continued under its opening
+# parenthesis; a long string literal is split into adjacent literals, which
+# the compiler joins, rather than shortened.
+MAX_LINE=100
+LONG_HITS="$(LC_ALL=C.UTF-8 awk -v max="$MAX_LINE" '
+  length($0) > max { printf "%s:%d: %d characters\n", FILENAME, FNR, length($0) }
+' src/*.c src/*.h src/*.def include/*.h tests/*.c tests/*.h tests/fuzz/*.c || true)"
+
+if [ -z "$LONG_HITS" ]; then
+  ok "every line of C fits in $MAX_LINE characters"
+else
+  bad "$(printf '%s\n' "$LONG_HITS" | wc -l) line(s) longer than $MAX_LINE characters"
+  printf '%s\n' "$LONG_HITS" | head -10 | sed 's/^/      /'
 fi
 
 # ---------------------------------------------------------------------------

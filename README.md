@@ -1335,6 +1335,7 @@ Run `make` with no arguments for the full list. The ones you will use:
 | `make deb` | build the installable `.deb` into the parent directory |
 | `make install-tree` | staged install into `DESTDIR` (what the package build uses) |
 | `make release` | bump the version, tag it and push |
+| `make ppa-builds` | report Launchpad's builds of this version; `WAIT=` minutes to keep watching |
 | `make install-dev` | install every tool the above wants, so nothing skips |
 | `make clean` | remove every intermediate file |
 
@@ -1370,9 +1371,9 @@ the full test run takes minutes, and interrupting every commit for it is how
 people learn to pass `--no-verify`, which switches off the push check too.
 `TMD_SKIP_HOOK=1` bypasses either.
 
-### Brace style, and why lint checks it
+### House style, and why lint checks it
 
-Two rules, both enforced by `make lint` rather than left to good intentions.
+Three rules, all enforced by `make lint` rather than left to good intentions.
 
 **Every body is braced**, even a single statement:
 
@@ -1401,6 +1402,12 @@ constants twice as tall for no gain.
 The check is awk rather than clang-format, because clang-format cannot be asked
 for one rule — it reformats everything, and the alignment and comment wrapping
 in these files were done by hand and are meant to stay.
+
+**No line of C is longer than 100 characters**, checked by lint's `line length`
+section across `src/`, `include/` and `tests/`. Characters, not bytes: an em
+dash in a comment is one column on screen. A long call wraps after an argument
+and continues under its opening parenthesis; a long message is split into
+adjacent string literals, which the compiler joins, rather than reworded to fit.
 
 ### The copyright audit
 
@@ -1458,10 +1465,37 @@ It is also dated, because it is a point-in-time check rather than something the
 build enforces. The table above is the part that is enforced: it re-runs on
 every push and fails the build when it stops being true.
 
+### Architectures
+
+| Architecture | Where | How often |
+|---|---|---|
+| x86-64 | Linux, FreeBSD, NetBSD, OpenBSD (CI); Ubuntu `amd64` package | every push; every release |
+| 64-bit ARM | Linux `aarch64` and macOS on Apple silicon (CI); Ubuntu `arm64` package | every push; every release |
+| 64-bit POWER, little-endian | Ubuntu `ppc64el` package | every release |
+| IBM Z | Ubuntu `s390x` package | every release |
+| 64-bit RISC-V | Ubuntu `riscv64` package | every release |
+
+"Every push" is the full CI run: both test suites, under `-Werror`, with an
+install. "Every release" is Launchpad building the package. Each of those builds
+runs the unit tests, and the release workflow's `builds` job fails if any of
+them fails. The end-to-end suite is not run there, because it needs `tar`,
+`bsdtar` and `python3` on the builder.
+
+s390x is the only big-endian one. It is there as a check rather than a worry:
+every number in a tar header is assembled a byte at a time, so byte order has
+nowhere to matter, and the MD5 and SHA-256 code writes its byte order out
+explicitly. The same goes for plain `char`, which is signed on x86-64 and on
+macOS, and unsigned on Linux for ARM, POWER, IBM Z and RISC-V. The Linux
+aarch64 leg is the one that covers it on every push.
+
+Not on the list: 32-bit systems, and big-endian POWER, for which Ubuntu has no
+port. Any system with a C11 compiler should build tmd, but those are not tested.
+The [manpage](man/tmd.1) carries the same list under PORTABILITY.
+
 ### From the PPA — recommended on Ubuntu
 
-The packaged build is the one to use on **Ubuntu 22.04, 24.04 and 26.04 LTS**.
-It is signed, it upgrades with everything else, `apt` pulls in the decompressors
+The packaged build is the one to use on **Ubuntu 22.04, 24.04 and 26.04 LTS**,
+on amd64, arm64, ppc64el, s390x and riscv64. It is signed, it upgrades with everything else, `apt` pulls in the decompressors
 tmd needs, and removing it leaves nothing behind:
 
 ```bash
@@ -1669,13 +1703,23 @@ What the tag sets off:
    compiler in it, and puts it through every mode, including a member-by-member
    `diff` against `tar -tvf`.
 4. **publish** — `dput`s the source packages to the PPA.
+5. **builds** — waits for Launchpad to build every source package on every
+   architecture the PPA has enabled (amd64, arm64, ppc64el, s390x and riscv64),
+   and fails if any build fails or was never created. Each of those builds runs
+   the unit tests, so this is also the test run on the architectures CI does
+   not have.
 
 `publish` needs `verify`, so a package that builds but does not install never
 reaches the PPA. That ordering is the point: **a bad upload to a PPA cannot be
 withdrawn, only superseded by a higher version.**
 
-Launchpad builds asynchronously after the upload, so a green workflow means
-"accepted", not "published". The PPA's own page is the last word.
+Launchpad builds after the upload, on its own schedule. `builds` waits up to five
+and a half hours, nearly all of it queueing. If it runs out first, `make
+ppa-builds` asks the same question later from any checkout, and a failure names
+the build and links its log. The architectures come from the PPA's own settings
+(**Change details → Processors** on Launchpad), so enabling another one needs
+no change here. An upload made before a processor was enabled is never built
+for it, and the check reports that as a missing build.
 
 ## GitHub configuration
 

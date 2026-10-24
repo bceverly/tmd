@@ -436,7 +436,8 @@ static void parse_pax(struct tmd_reader *r, const char *data, size_t len,
         {
             if (record_len > (SIZE_MAX - 9) / 10)
             {
-                warn_archive(r, "pax-record-length-overflow", "pax record length at offset %zu overflows", start);
+                warn_archive(r, "pax-record-length-overflow",
+                             "pax record length at offset %zu overflows", start);
                 return;
             }
             record_len = record_len * 10 + (size_t)(data[pos] - '0');
@@ -444,7 +445,8 @@ static void parse_pax(struct tmd_reader *r, const char *data, size_t len,
         }
         if (pos == start || pos >= len || data[pos] != ' ')
         {
-            warn_archive(r, "pax-record-malformed", "malformed pax record at offset %zu (no \"<len> \" prefix)",
+            warn_archive(r, "pax-record-malformed",
+                         "malformed pax record at offset %zu (no \"<len> \" prefix)",
                          start);
             return;
         }
@@ -551,7 +553,8 @@ static char *read_payload(struct tmd_reader *r, uint64_t len, uint64_t cap,
 
     if (len > cap)
     {
-        warn_archive(r, "extension-header-too-large", "%s is %llu bytes, over the %llu byte limit — reading the first %llu",
+        warn_archive(r, "extension-header-too-large",
+                     "%s is %llu bytes, over the %llu byte limit — reading the first %llu",
                      what, (unsigned long long)len, (unsigned long long)cap,
                      (unsigned long long)cap);
         want = cap;
@@ -880,7 +883,8 @@ static void sparse_from_block(struct tmd_entry *e, const char *base,
         if (!tmd_parse_num(offset_field, 12, &offset) ||
             !tmd_parse_num(bytes_field, 12, &numbytes))
         {
-            warn_entry(e, "sparse-map-invalid-number", "sparse map entry %zu is not a valid number", e->nsparse);
+            warn_entry(e, "sparse-map-invalid-number",
+                       "sparse map entry %zu is not a valid number", e->nsparse);
             return;
         }
         if (offset == 0 && numbytes == 0)
@@ -914,7 +918,8 @@ static void read_sparse_extensions(struct tmd_reader *r, struct tmd_entry *e)
         if (++guard > MAX_SPARSE_MAP_BLOCKS)
         {
             e->sparse_truncated = true;
-            warn_entry(e, "sparse-map-too-long", "sparse map exceeds %u blocks — not reading further",
+            warn_entry(e, "sparse-map-too-long",
+                       "sparse map exceeds %u blocks — not reading further",
                        MAX_SPARSE_MAP_BLOCKS);
             return;
         }
@@ -998,7 +1003,8 @@ static uint64_t read_pax_sparse_map_1_0(struct tmd_reader *r,
                 counted = true;
                 if (expected > MAX_SPARSE_ENTRIES)
                 {
-                    warn_entry(e, "sparse-map-too-many-entries", "sparse map claims %llu entries — not reading it",
+                    warn_entry(e, "sparse-map-too-many-entries",
+                               "sparse map claims %llu entries — not reading it",
                                (unsigned long long)expected);
                     e->sparse_truncated = true;
                     goto done;
@@ -1402,8 +1408,9 @@ static void consume_trailer(struct tmd_reader *r)
 
     if (r->archive.trailing_garbage)
     {
-        warn_archive(r, "data-after-end-marker", "%llu bytes of non-zero data follow the end-of-archive marker "
-                        "(a second archive appended, or damage)",
+        warn_archive(r, "data-after-end-marker",
+                     "%llu bytes of non-zero data follow the end-of-archive marker "
+                     "(a second archive appended, or damage)",
                      (unsigned long long)r->archive.trailing_bytes);
     }
 
@@ -1758,7 +1765,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
          * iteration that does not produce an entry is counted. */
         if (++extension_guard > 1000)
         {
-            warn_archive(r, "too-many-extension-headers", "over 1000 extension headers for one member — giving up on it");
+            warn_archive(r, "too-many-extension-headers",
+                         "over 1000 extension headers for one member — giving up on it");
             return end_of_archive(r);
         }
 
@@ -1775,7 +1783,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                     return fail(r, "%s: empty file, not a tar archive",
                                 r->archive.name);
                 }
-                warn_archive(r, "missing-end-marker", "archive ends without the two-block end-of-archive marker");
+                warn_archive(r, "missing-end-marker",
+                             "archive ends without the two-block end-of-archive marker");
             } else if (!r->saw_any_header)
             {
                 /* A first block that is too short to be a header is not a
@@ -1799,7 +1808,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                  * exactly that on a CI runner whose filesystem ordered them
                  * differently.
                  */
-                warn_archive(r, "missing-end-marker", "archive ends without the two-block end-of-archive marker");
+                warn_archive(r, "missing-end-marker",
+                             "archive ends without the two-block end-of-archive marker");
             }
             return end_of_archive(r);
         }
@@ -1819,7 +1829,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
                  * worth saying, because it is also what a corrupt block looks
                  * like.
                  */
-                warn_archive(r, "lone-zero-block", "a single zero block at offset %llu is not an end marker",
+                warn_archive(r, "lone-zero-block",
+                             "a single zero block at offset %llu is not an end marker",
                              (unsigned long long)(tmd_source_offset(r->src) -
                                                   (uint64_t)TMD_BLOCK_SIZE -
                                                   (uint64_t)second_got));
@@ -1868,14 +1879,16 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
 
                 if (readable)
                 {
-                    warn_entry(e, "checksum-mismatch", "header checksum mismatch at offset %llu: field says %u, "
-                                  "block sums to %u (unsigned) / %d (signed)",
+                    warn_entry(e, "checksum-mismatch",
+                               "header checksum mismatch at offset %llu: field says %u, "
+                               "block sums to %u (unsigned) / %d (signed)",
                                (unsigned long long)at,
                                e->chksum_stored, e->chksum_unsigned, e->chksum_signed);
                 } else
                 {
-                    warn_entry(e, "checksum-field-invalid", "header checksum field at offset %llu is not octal; "
-                                  "block sums to %u",
+                    warn_entry(e, "checksum-field-invalid",
+                               "header checksum field at offset %llu is not octal; "
+                               "block sums to %u",
                                (unsigned long long)at, e->chksum_unsigned);
                 }
             }
@@ -2206,7 +2219,8 @@ int tmd_reader_next(struct tmd_reader *r, const struct tmd_entry **out)
             {
                 if (e->data_size != 0)
                 {
-                    warn_entry(e, "unexpected-payload-size", "a %s carries a size of %llu; ignoring the payload",
+                    warn_entry(e, "unexpected-payload-size",
+                               "a %s carries a size of %llu; ignoring the payload",
                                tmd_kind_name(e->kind),
                                (unsigned long long)e->data_size);
                     payload = 0;

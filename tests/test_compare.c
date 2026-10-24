@@ -343,7 +343,9 @@ static void test_manifests(void)
 
     TEST_CASE("a manifest that mixes digest algorithms is refused");
     fm = temp_text("3 md5:900150983cd24fb0d6963f7d28e17f72 keep/a.txt\n"
-                   "1 sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881 skip/b.txt\n");
+                   "1 sha256:"
+                   "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+                   " skip/b.txt\n");
     out = compare_to_string(true, fa, fm, &opt, &status);
     CHECK_INT(status, TMD_EXIT_ERROR);
     free(out);

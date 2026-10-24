@@ -372,6 +372,12 @@ deb-source: build ## Build the signed source package for a Launchpad upload
 deb-sbuild: build ## Build in a clean chroot, the way a Launchpad builder does
 	@scripts/build-deb.sh --sbuild
 
+# Read-only and needs no build: it asks Launchpad's public API how the builds
+# of the version in VERSION are going. WAIT=MINUTES keeps watching.
+.PHONY: ppa-builds
+ppa-builds: ## Report Launchpad's builds of this version (WAIT=minutes to keep watching)
+	@scripts/ppa-builds.sh $(if $(WAIT),--wait $(WAIT))
+
 # The staged install debian/rules calls.
 #
 # Separate from `make install`, because the two jobs want different answers.

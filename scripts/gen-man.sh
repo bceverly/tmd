@@ -479,6 +479,27 @@ than to its size.
 .B \-\-hash
 reads the content of the members it selects, and costs what reading them
 costs.
+.SH PORTABILITY
+.B tmd
+is C11 and links nothing but the C library. It makes no assumption about byte
+order or about the signedness of
+.BR char :
+every number in a header is assembled a byte at a time.
+.PP
+Built and tested on every change to the source:
+.IP \(bu 2
+Linux on x86\-64 and on 64\-bit ARM (aarch64)
+.IP \(bu 2
+macOS on Apple silicon
+.IP \(bu 2
+FreeBSD, NetBSD and OpenBSD on x86\-64
+.PP
+The Ubuntu packages are built for amd64, arm64, ppc64el, s390x and riscv64,
+and the unit tests run on each before the package is published. s390x is the
+one big\-endian system among them.
+.PP
+Any other system with a C11 compiler should build it. 32\-bit systems are not
+tested.
 .SH SEE ALSO
 .BR tar (1),
 .BR bsdtar (1),

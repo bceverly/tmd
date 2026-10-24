@@ -31,13 +31,13 @@ asked of a roadmap a year later.
 | [Exhaustive JSON, and a `-t` spelling for it](#exhaustive-json-output-and-a--t-spelling-for-it-v1200) | **Shipped** in v1.2.0.0 |
 | [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600) | **aarch64 shipped** in v1.6.0.0; [big-endian declined](#a-big-endian-ci-leg) |
 | [Build and test on macOS and the BSDs](#build-and-test-on-macos-and-the-bsds) | **Shipped**: macOS natively, the three BSDs in QEMU |
+| [Packages for the BSDs and macOS](#packages-for-the-bsds-and-macos) | **Planned** |
 
-Nothing open. Fourteen shipped, one declined.
+One open, fourteen shipped, one declined.
 
-The roadmap has been worked through. New ideas go under
-[Other ideas](#other-ideas); anything decided against goes to
-[Considered and declined](#considered-and-declined) with the reason, so it does
-not come back as a suggestion a year from now.
+New ideas go under [Other ideas](#other-ideas); anything decided against goes
+to [Considered and declined](#considered-and-declined) with the reason, so it
+does not come back as a suggestion a year from now.
 
 The minor moves each time the command line grows — the rule v1.2.0.0 set when
 `-t` was added. v1.5.0.0 took `--diff`, `--verify` and exit status 5 together
@@ -49,6 +49,72 @@ package declares, which is more than a patch should carry. The macOS and BSD
 work stays on the patch digit by the same rule read the other way: new CI legs
 and a build that works out its own link flags change nothing a user types and
 nothing a user gets — the Linux binary is byte for byte what it was.
+
+---
+
+## Planned
+
+### Packages for the BSDs and macOS
+
+**The idea:** tmd builds, tests and installs on FreeBSD, OpenBSD, NetBSD and
+macOS on every push, but on all four it is still installed from source. Ubuntu
+is the only system with a package. Give the other four one each, built the way
+the sibling `restate` repository already builds its BSD packages, so the two
+projects release the same way.
+
+**What restate does, and what tmd would copy:**
+
+- **`make bsd-pkg`**, which stages `make install-tree` into a scratch
+  `DESTDIR` and hands it to `scripts/build-bsd-pkg.sh`. That script builds the
+  package with the system's own tool on the system it is for: `pkg create` on
+  FreeBSD (`tmd-VERSION-freebsd-REL-ARCH.pkg`), `pkg_create` on OpenBSD and
+  NetBSD (`tmd-VERSION-openbsd-REL-ARCH.tgz`, `...-netbsd-...`). The manual
+  goes under `$(prefix)/man` on OpenBSD and NetBSD, as their ports and pkgsrc
+  put it, and under `share/man` elsewhere.
+- **`scripts/verify-bsd-pkg.sh`**, which installs the package with
+  `pkg add` / `pkg_add`, checks what it put where (binary, manual, `man tmd`
+  resolving), and removes it again. It refuses a machine that already has a
+  `tmd` under `/usr/local`, since removing the package would take that one too.
+- **A `bsd` job in the release workflow**, a matrix over every release each
+  system supports (restate's is FreeBSD 14.4, 14.5 and 15.1, OpenBSD 7.9 and
+  8.0, NetBSD 10.1 and 11.0). It runs in the same pinned
+  `cross-platform-actions` VMs CI already uses, building from the release
+  tarball rather than the checkout. OpenBSD 8.0 runs in `vmactions` until
+  `cross-platform-actions` has an image of it. Nothing is published unless the
+  package installs, checks and uninstalls on its own system.
+- **Unsigned by the systems' own means**, as restate's are, because a key per
+  system is one more secret for the release to keep. OpenBSD's is installed
+  with `pkg_add -D unsigned`, and its file has to be copied to
+  `tmd-VERSION.tgz` first because OpenBSD's `pkg_add` refuses a file not named
+  after the package.
+
+**What tmd has to grow first.** tmd's release currently ends at the PPA. There
+is no GitHub release with files attached, so there is nowhere to put a BSD
+package and nothing to vouch for it. restate's release workflow supplies all
+of that, and it comes over too: a source tarball made by `git archive`, built
+and tested *from the tarball* on a clean runner, a `SHA256SUMS`, and a signed
+SLSA build-provenance attestation, with the BSD packages listed in both. That
+is what stands in for the signatures the packages do not carry.
+
+**macOS goes beyond restate.** restate's macOS package is still on its own
+roadmap, so tmd would be the first of the two to ship one. The likely shape is
+a flat `.pkg` from `pkgbuild` (binary in `/usr/local/bin`, manual in
+`/usr/local/share/man/man1`), built and installed on the `macos-latest`
+runner. Signing and notarizing it needs an Apple Developer ID. Without one, a
+downloaded `.pkg` is stopped by Gatekeeper, which makes it worse than the
+from-source instructions it replaces. Whether to pay for the ID decides
+whether this half happens. A Homebrew tap needs no ID and is the fallback.
+
+**Later, in each system's own tree:** a FreeBSD port, an OpenBSD port, a
+NetBSD pkgsrc entry and a Homebrew formula in homebrew-core. Each of these is
+a submission reviewed by someone else, on their schedule, which is why they
+follow the release-attached packages rather than replacing them. restate lists
+the same four.
+
+**Version digit.** Nothing a user types changes, so by the rule above this
+would be a patch, like the CI work it builds on. But the release gaining
+artifacts, checksums and an attestation is a change in what a release *is*,
+and that probably earns a minor.
 
 ---
 
@@ -477,7 +543,7 @@ long-name member is the `L` header and not the block `raw` describes, so
 ### A big-endian CI leg
 
 **The idea:** every job runs on x86-64, which is little-endian. tmd claims to be
-endian-clean; a qemu-based `s390x` or `ppc64` leg would prove it.
+endian-clean; a qemu-based `s390x` leg would prove it.
 
 **Declined, after shipping the aarch64 half of the same item** (see
 [More architectures in CI](#more-architectures-in-ci--the-aarch64-half-v1600)),
