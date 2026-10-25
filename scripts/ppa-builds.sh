@@ -8,6 +8,8 @@
 #
 #   scripts/ppa-builds.sh              look once, for the version in VERSION
 #   scripts/ppa-builds.sh --wait 330   keep looking, up to 330 minutes
+#   scripts/ppa-builds.sh --pending-ok a build still queued at the end is a
+#                                      warning, not a failure
 #   make ppa-builds [WAIT=330]
 #
 # A PPA upload is accepted long before anything is compiled, and Launchpad then
@@ -27,7 +29,10 @@
 #   LAUNCHPAD_SERIES   jammy noble resolute
 #
 # Exit status: 0 every build succeeded, 1 a build failed or is missing, 2 still
-# building when the wait ran out (or straight away, without --wait).
+# building when the wait ran out (or straight away, without --wait). With
+# --pending-ok that last case is 0, with a warning naming what is still queued:
+# riscv64 has sat in Launchpad's queue for over five hours, longer than a
+# GitHub job may run, and a build nobody has started has not failed.
 #
 # Read-only: the API is public, so no credentials are involved, and nothing
 # here touches git -- it can be run from a checkout or a release tarball.
@@ -37,16 +42,23 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 WAIT_MINUTES=0
-case "${1:-}" in
-  --wait)
-    WAIT_MINUTES="${2:?--wait needs a number of minutes}"
-    case "$WAIT_MINUTES" in
-      ''|*[!0-9]*) echo "--wait takes whole minutes, not '$WAIT_MINUTES'" >&2; exit 2 ;;
-    esac
-    ;;
-  "") ;;
-  *) echo "Unknown option: $1" >&2; exit 2 ;;
-esac
+PENDING_OK=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --wait)
+      WAIT_MINUTES="${2:?--wait needs a number of minutes}"
+      case "$WAIT_MINUTES" in
+        ''|*[!0-9]*) echo "--wait takes whole minutes, not '$WAIT_MINUTES'" >&2; exit 2 ;;
+      esac
+      shift 2
+      ;;
+    --pending-ok)
+      PENDING_OK=1
+      shift
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 2 ;;
+  esac
+done
 
 # How long to sleep between looks. A build of tmd takes about a minute; the
 # wait is in the queue, so looking more often than this finds nothing new.
@@ -117,10 +129,12 @@ for series in $SERIES_LIST; do
   EXPECTED[$series]="$(comm -12 <(printf '%s\n' "$PPA_ARCHES") <(printf '%s\n' "$have"))"
 done
 
-# One look at every series. Prints what it finds and sets FAILED and PENDING.
+# One look at every series. Prints what it finds and sets FAILED, PENDING and
+# PENDING_LIST, the last for the warning --pending-ok gives.
 look() {
   FAILED=0
   PENDING=0
+  PENDING_LIST=""
   local series version query pubs self builds arch state log web want
   for series in $SERIES_LIST; do
     version="${VERSION}~${series}1"
@@ -130,6 +144,7 @@ look() {
       # Not accepted yet, or rejected: a rejection is only ever an email.
       pend "$version: not in the PPA yet (a rejected upload never appears)"
       PENDING=$((PENDING + 1))
+      PENDING_LIST="$PENDING_LIST $version"
       continue
     fi
     IFS=$'\t' read -r self <<< "$(printf '%s\n' "$pubs" | head -1)"
@@ -153,6 +168,7 @@ look() {
         |"Cancelling build")
           pend "$version $arch: $state"
           PENDING=$((PENDING + 1))
+          PENDING_LIST="$PENDING_LIST $version/$arch"
           ;;
         *)
           # Failed to build, Dependency wait, Chroot problem, Failed to upload,
@@ -187,7 +203,13 @@ while :; do
   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
     printf '\n'
     pend "$PENDING still pending -- run this again later, or with --wait MINUTES"
-    exit 2
+    [ "$PENDING_OK" -eq 1 ] || exit 2
+    # Nothing has failed; the rest have not been started. On GitHub, say so
+    # where it shows: on the run's summary page, not just in this log.
+    if [ "${GITHUB_ACTIONS:-}" = true ]; then
+      echo "::warning::Still queued on Launchpad, not failed:$PENDING_LIST"
+    fi
+    exit 0
   fi
   sleep "$POLL_SECONDS"
 done

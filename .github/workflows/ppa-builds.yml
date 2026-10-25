@@ -1,0 +1,44 @@
+# Copyright (c) 2026 Bryan C. Everly
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Check, once a day, that every Launchpad build of the released version
+# succeeded.
+#
+# The release workflow's builds job waits two hours for Launchpad and then
+# stops, warning about anything still queued -- riscv64 has queued for longer
+# than a GitHub job may run. This picks up from there: it looks at the version
+# on main, which `make release` has just set to the one it tagged, and goes red
+# if any build of it failed. A build still queued here is a warning again; it
+# is the next day's run that will see it finish.
+#
+# Once every build has succeeded this passes every day until the next release.
+# It goes red between releases in one case: a processor enabled on the PPA
+# after the upload, which Launchpad never builds the old upload for. That is
+# true, and the next release clears it.
+#
+# Read-only, and the API is public: nothing here needs a secret.
+
+name: Launchpad builds
+
+on:
+  schedule:
+    # 06:17 UTC: off the hour, when scheduled runs bunch up and get delayed.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  builds:
+    name: Check the Launchpad builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check every build of this version
+        env:
+          LAUNCHPAD_PPA: ${{ vars.LAUNCHPAD_PPA || 'ppa:bceverly/tmd' }}
+          LAUNCHPAD_SERIES: ${{ vars.LAUNCHPAD_SERIES || 'jammy noble resolute' }}
+        run: scripts/ppa-builds.sh --pending-ok

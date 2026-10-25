@@ -16,6 +16,7 @@
 #   verify   install the .deb in a clean container and check that it works
 #   publish  dput the source packages to Launchpad
 #   builds   wait for Launchpad to build them, and fail if any build fails
+#            (one still queued after two hours is left to ppa-builds.yml)
 #
 # `publish` needs `verify`, so a package that builds but does not install never
 # reaches the PPA. That ordering is the whole point: a bad upload to a PPA
@@ -607,28 +608,33 @@ jobs:
   # email. This job waits for every one and goes red if any of them fails.
   #
   # Each Launchpad build runs the unit tests (debian/rules, dh_auto_test), so
-  # a green job here also means the tests passed on every architecture.
+  # a green job with no warning also means the tests passed on every
+  # architecture.
   #
   # The waiting is scripts/ppa-builds.sh, which is the same thing
-  # `make ppa-builds` runs by hand. If this job times out with builds still
-  # queued, that is the command to run later; re-running the whole workflow
-  # would work too, but goes through the gate and the build again to get here.
+  # `make ppa-builds` runs by hand.
+  #
+  # Two hours, and a build still QUEUED at the end is a warning rather than a
+  # failure. v1.8.1.3 is why: everything else had built, but riscv64's three
+  # builds were still at "Needs building" when a five-and-a-half-hour wait ran
+  # out -- close to GitHub's six-hour limit for a job -- and then built
+  # cleanly. Failing the release for a build nobody had started said nothing
+  # about tmd. The Launchpad builds workflow picks up whatever this leaves
+  # queued, once a day, and fails if any of it fails.
   builds:
     name: Wait for the Launchpad builds
     needs: publish
     runs-on: ubuntu-latest
-    # GitHub's limit for a hosted runner is six hours. tmd compiles in about a
-    # minute; nearly all of this is queueing, mostly for riscv64.
-    timeout-minutes: 345
+    timeout-minutes: 135
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Wait for every build to finish
+      - name: Wait for the builds to finish
         env:
           LAUNCHPAD_PPA: ${{ vars.LAUNCHPAD_PPA || 'ppa:bceverly/tmd' }}
           LAUNCHPAD_SERIES: ${{ vars.LAUNCHPAD_SERIES || 'jammy noble resolute' }}
         # Fifteen minutes short of the job's timeout, so the script reports
         # what is still pending rather than being killed mid-sentence.
-        run: scripts/ppa-builds.sh --wait 330
+        run: scripts/ppa-builds.sh --wait 120 --pending-ok

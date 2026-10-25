@@ -1705,7 +1705,8 @@ What the tag sets off:
 4. **publish** — `dput`s the source packages to the PPA.
 5. **builds** — waits for Launchpad to build every source package on every
    architecture the PPA has enabled (amd64, arm64, ppc64el, s390x and riscv64),
-   and fails if any build fails or was never created. Each of those builds runs
+   and fails if any build fails or was never created. One still queued after
+   two hours is a warning, left to the daily check. Each of those builds runs
    the unit tests, so this is also the test run on the architectures CI does
    not have.
 
@@ -1713,10 +1714,14 @@ What the tag sets off:
 reaches the PPA. That ordering is the point: **a bad upload to a PPA cannot be
 withdrawn, only superseded by a higher version.**
 
-Launchpad builds after the upload, on its own schedule. `builds` waits up to five
-and a half hours, nearly all of it queueing. If it runs out first, `make
-ppa-builds` asks the same question later from any checkout, and a failure names
-the build and links its log. The architectures come from the PPA's own settings
+Launchpad builds after the upload, on its own schedule. `builds` waits two
+hours. A build that is still *queued* by then is a warning on the run, not a
+failure: riscv64 has sat in Launchpad's queue for longer than GitHub lets a job
+run, and a build nobody has started has not failed. The **Launchpad builds**
+workflow (`.github/workflows/ppa-builds.yml`) runs the same check once a day
+and goes red if any build of the released version failed, so a late riscv64
+failure is still caught. `make ppa-builds` asks the same question by hand from
+any checkout, and a failure names the build and links its log. The architectures come from the PPA's own settings
 (**Change details → Processors** on Launchpad), so enabling another one needs
 no change here. An upload made before a processor was enabled is never built
 for it, and the check reports that as a missing build.
